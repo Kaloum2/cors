@@ -39,6 +39,7 @@
 *-----------------------------------------------------------------------------*/
 #define _POSIX_C_SOURCE 199506
 #include <ctype.h>
+#include <errno.h>
 #ifndef WIN32
 #include <dirent.h>
 #include <time.h>

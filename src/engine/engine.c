@@ -72,7 +72,11 @@ static void cmd_add_source(char **args, int narg, vt_t *vt)
         vt_printf(vt,"cors server has not been started\n");
         return;
     }
-    if (narg<7) return;
+    if (narg<7)
+    {
+        printf("Insufficient arguments \n");
+        return;
+    }
     if (inet_addr(args[2])==INADDR_NONE) return;
 
     double pos[3];

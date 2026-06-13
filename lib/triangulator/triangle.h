@@ -250,6 +250,7 @@
 
 #define ANSI_DECLARATORS
 #define REAL double
+#define VOID int
 
 struct triangulateio {
     REAL *pointlist;                                               /* In / out */
