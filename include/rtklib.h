@@ -794,6 +794,13 @@ typedef struct {        /* solution buffer type */
     int nb;             /* number of byte in message buffer */
 } solbuf_t;
 
+typedef struct {        /* FKP gradient satellite entry (RTCM 1034/1035) */
+    int prn, iod;
+    double gn0, ge0, gn1, ge1;
+} rtcm_fkp_sat_t;
+
+#define RTCM_MAXFKP 32
+
 typedef struct {        /* RTCM control struct type */
     int staid,srcid;    /* station id/source id */
     int stah;           /* station health */
@@ -825,6 +832,9 @@ typedef struct {        /* RTCM control struct type */
     uint32_t nmsg2[100]; /* message count of RTCM 2 (1-99:1-99,0:other) */
     uint32_t nmsg3[400]; /* message count of RTCM 3 (1-299:1001-1299,300-329:4070-4099,0:ohter) */
     char opt[32];      /* RTCM dependent options */
+    int fkpsys;        /* FKP message system (SYS_GPS/SYS_GLO) */
+    int nfkp;          /* number of FKP satellites in fkp[] */
+    rtcm_fkp_sat_t fkp[RTCM_MAXFKP]; /* FKP gradients from 1034/1035 */
 } rtcm_t;
 
 typedef struct {        /* RINEX control struct type */
@@ -1293,6 +1303,9 @@ EXPORT int rtcm_encode_sta(int type, const sta_t *sta, char *buff);
 EXPORT int rtcm_encode_geph(int type, const geph_t *geph, char *buff);
 EXPORT int rtcm_encode_eph(int type, const eph_t *eph, char *buff);
 EXPORT int rtcm_encode_obs(rtcm_t *rtcm, const int *type, int nt, const nav_t *nav, obsd_t *obs, int n, char *buff);
+
+EXPORT void rtcm_set_fkp_payload(const rtcm_fkp_sat_t *sat, int ns);
+EXPORT int rtcm_encode_fkp(int type, int staid, const rtcm_fkp_sat_t *sat, int ns, char *buff);
 
 /* rinex functions -----------------------------------------------------------*/
 EXPORT int readrnx (const char *file, int rcv, const char *opt, obs_t *obs,

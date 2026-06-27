@@ -983,17 +983,66 @@ static int decode_type1033(rtcm_t *rtcm)
     log_trace(3,"rtcm3 1033: ant=%s:%s rec=%s:%s:%s\n",des,sno,rec,ver,rsn);
     return 5;
 }
+/* decode FKP satellite block (mirror of rtcm3e.c enc_fkp_sat_bits) ------------*/
+static int decode_fkp_sat_bits(const uint8_t *buff, int *i, rtcm_fkp_sat_t *s)
+{
+    int v;
+
+    if (!buff||!i||!s) return 0;
+    s->prn=(int)getbitu(buff,*i,6); *i+=6;
+    s->iod=(int)getbitu(buff,*i,8); *i+=8;
+    v=getbits(buff,*i,10); s->gn0=v*0.01; *i+=10;
+    v=getbits(buff,*i,10); s->ge0=v*0.01; *i+=10;
+    v=getbits(buff,*i,11); s->gn1=v*0.01; *i+=11;
+    v=getbits(buff,*i,11); s->ge1=v*0.01; *i+=11;
+    return 1;
+}
+/* decode type 1034/1035: network FKP gradient ---------------------------------*/
+static int decode_type_fkp(rtcm_t *rtcm, int sys)
+{
+    char *msg;
+    int i=24+12,staid,ns,j;
+
+    if (rtcm->len<5) {
+        log_trace(2,"rtcm3 fkp length error: len=%d\n",rtcm->len);
+        return -1;
+    }
+    staid=(int)getbitu(rtcm->buff,i,12); i+=12;
+    ns=(int)getbitu(rtcm->buff,i,8); i+=8;
+    if (ns<=0||ns>RTCM_MAXFKP) {
+        log_trace(2,"rtcm3 fkp ns error: ns=%d\n",ns);
+        return -1;
+    }
+    if (i+56*ns>rtcm->len*8) {
+        log_trace(2,"rtcm3 fkp length error: len=%d ns=%d\n",rtcm->len,ns);
+        return -1;
+    }
+    if (rtcm->outmsg) {
+        msg=rtcm->msgtype+strlen(rtcm->msgtype);
+        sprintf(msg," staid=%4d nsat=%2d",staid,ns);
+    }
+    if (!test_staid(rtcm,staid)) return -1;
+
+    rtcm->staid=staid;
+    rtcm->fkpsys=sys;
+    rtcm->nfkp=ns;
+    for (j=0;j<ns;j++) {
+        if (!decode_fkp_sat_bits(rtcm->buff,&i,&rtcm->fkp[j])) return -1;
+    }
+    log_trace(3,"rtcm3 fkp: type=%s staid=%d ns=%d prn=%d gn0=%.3f ge0=%.3f\n",
+              sys==SYS_GLO?"1035":"1034",staid,ns,rtcm->fkp[0].prn,
+              rtcm->fkp[0].gn0,rtcm->fkp[0].ge0);
+    return 10; /* FKP gradient data */
+}
 /* decode type 1034: GPS network FKP gradient --------------------------------*/
 static int decode_type1034(rtcm_t *rtcm)
 {
-    log_trace(2,"rtcm3 1034: not supported message\n");
-    return 0;
+    return decode_type_fkp(rtcm,SYS_GPS);
 }
 /* decode type 1035: GLONASS network FKP gradient ----------------------------*/
 static int decode_type1035(rtcm_t *rtcm)
 {
-    log_trace(2,"rtcm3 1035: not supported message\n");
-    return 0;
+    return decode_type_fkp(rtcm,SYS_GLO);
 }
 /* decode type 1037: GLONASS network RTK ionospheric correction difference ---*/
 static int decode_type1037(rtcm_t *rtcm)
@@ -2543,8 +2592,8 @@ extern int decode_rtcm3(rtcm_t *rtcm)
         case 1031: ret=decode_type1031(rtcm); break; /* not supported */
         case 1032: ret=decode_type1032(rtcm); break; /* not supported */
         case 1033: ret=decode_type1033(rtcm); break;
-        case 1034: ret=decode_type1034(rtcm); break; /* not supported */
-        case 1035: ret=decode_type1035(rtcm); break; /* not supported */
+        case 1034: ret=decode_type1034(rtcm); break;
+        case 1035: ret=decode_type1035(rtcm); break;
         case 1037: ret=decode_type1037(rtcm); break; /* not supported */
         case 1038: ret=decode_type1038(rtcm); break; /* not supported */
         case 1039: ret=decode_type1039(rtcm); break; /* not supported */

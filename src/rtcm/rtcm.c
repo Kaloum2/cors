@@ -73,6 +73,8 @@ extern int init_rtcm(rtcm_t *rtcm)
     rtcm->word=0;
     for (i=0;i<100;i++) rtcm->nmsg2[i]=0;
     for (i=0;i<400;i++) rtcm->nmsg3[i]=0;
+    rtcm->fkpsys=0;
+    rtcm->nfkp=0;
 
     rtcm->obs.data=NULL;
     rtcm->nav.eph =NULL;
@@ -112,7 +114,7 @@ extern void free_rtcm(rtcm_t *rtcm)
  * return : status (-1: error message, 0: no message, 1: input observation data,
  *                  2: input ephemeris, 5: input station pos/ant parameters,
  *                  6: input time parameter, 7: input dgps corrections,
- *                  9: input special message)
+ *                  9: input special message, 10: input FKP gradients)
  * notes  : before firstly calling the function, time in rtcm control struct has
  *          to be set to the approximate time within 1/2 hour in order to resolve
  *          ambiguity of time in rtcm messages.
