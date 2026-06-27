@@ -1,0 +1,87 @@
+# CMake / build
+build/
+build01/
+cmake-build-*/
+out/
+Testing/
+
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+_deps/
+Makefile
+compile_commands.json
+
+# Local dependency (removed from upstream; fetch/build locally)
+lib/lapack/
+
+# Local dev configs
+conf2/
+
+# Private / internal docs (public repo — do not commit)
+doc/recap/
+doc/dev/
+doc/user/
+doc/MENGINE.md
+
+# E2E tests and local scan configs (may contain private caster URLs)
+test/e2e/
+
+# Python
+__pycache__/
+*.pyc
+
+# Compiled objects (prebuilt files under bin/ stay tracked)
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Fortran
+*.mod
+*.smod
+
+# Runtime artifacts (cors-engine)
+*.trace
+*.shm*
+*.idmaptbl
+*.log
+
+# Debug / profiling
+*.gcno
+*.gcda
+*.prof
+vgcore.*
+core
+core.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Trunk (linter)
+.trunk/
+
+# Local translated docs
+doc/* fr.pdf
+
+# Misc
+cd/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -29,27 +29,31 @@ cors-engine commands:
 8. show cors base stations delaunay triangulate
 > showdtrigs
 
-9. show cors base station subnet
-> showdtrigs
+9. export Delaunay mesh as interactive Plotly map (HTML)
+> plotdtrigs [output.html]
+>> eg: plotdtrigs idf_mesh.html
 
-10. add ntripagnent user
+10. show cors base station subnet
+> showsubnet
+
+11. add ntripagnent user
 > adduser username userpassword
 
-11. delete ntripagent user
+12. delete ntripagent user
 > deluser username
 
-12. show ntripagent users
+13. show ntripagent users
 > showusers
 
-13. add VRS station
+14. add VRS station
 > addvsta name ECEF-X ECEF-Y ECEF-Z
 >> eg: addvsta VRS001 -2149724.236 4414605.355 4061567.167
 
-14. delete VRS station
+15. delete VRS station
 > delvsta name
 
-15. show VRS station
-> showvsta
+16. show VRS station
+> showvstas
 
 
 
