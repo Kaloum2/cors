@@ -232,3 +232,21 @@ extern int rtcm_encode_sta(const int type, const sta_t *sta, char *buff)
     if (rtcm.nbyte) memcpy(buff,rtcm.buff,sizeof(char)*rtcm.nbyte);
     return rtcm.nbyte;;
 }
+
+extern int rtcm_encode_fkp(int type, int staid, const rtcm_fkp_sat_t *sat, int ns,
+                           char *buff)
+{
+    rtcm_t rtcm={0};
+    int nb=0;
+
+    if (!sat||ns<=0||!buff) return 0;
+    rtcm_set_fkp_payload(sat,ns);
+    rtcm.staid=staid;
+    rtcm.time=timeget();
+    if (!gen_rtcm3(&rtcm,type,0,0)) return 0;
+    if (rtcm.nbyte) {
+        memcpy(buff,rtcm.buff,rtcm.nbyte);
+        nb=rtcm.nbyte;
+    }
+    return nb;
+}

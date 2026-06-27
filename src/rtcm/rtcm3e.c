@@ -26,6 +26,76 @@
 #define ROUND_U(x)  ((uint32_t)floor((x)+0.5))
 #define MIN(x,y)    ((x)<(y)?(x):(y))
 
+typedef struct {
+    int prn, iod;
+    double gn0, ge0, gn1, ge1;
+} rtcm_fkp_enc_sat_t;
+
+static rtcm_fkp_enc_sat_t g_fkp_enc_sat[32];
+static int g_fkp_enc_ns=0;
+
+void rtcm_set_fkp_payload(const rtcm_fkp_sat_t *sat, int ns)
+{
+    int i,n=ns;
+
+    if (!sat||ns<=0) { g_fkp_enc_ns=0; return; }
+    if (n>32) n=32;
+    for (i=0;i<n;i++) {
+        g_fkp_enc_sat[i].prn=sat[i].prn;
+        g_fkp_enc_sat[i].iod=sat[i].iod;
+        g_fkp_enc_sat[i].gn0=sat[i].gn0;
+        g_fkp_enc_sat[i].ge0=sat[i].ge0;
+        g_fkp_enc_sat[i].gn1=sat[i].gn1;
+        g_fkp_enc_sat[i].ge1=sat[i].ge1;
+    }
+    g_fkp_enc_ns=n;
+}
+
+static int enc_fkp_sat_bits(uint8_t *buff, int i, const rtcm_fkp_enc_sat_t *s)
+{
+    int v;
+
+    setbitu(buff,i,6,s->prn); i+=6;
+    setbitu(buff,i,8,s->iod); i+=8;
+    v=(int)ROUND(s->gn0/0.01); if (v>511) v=511; if (v<-512) v=-512;
+    setbits(buff,i,10,v); i+=10;
+    v=(int)ROUND(s->ge0/0.01); if (v>511) v=511; if (v<-512) v=-512;
+    setbits(buff,i,10,v); i+=10;
+    v=(int)ROUND(s->gn1/0.01); if (v>1023) v=1023; if (v<-1024) v=-1024;
+    setbits(buff,i,11,v); i+=11;
+    v=(int)ROUND(s->ge1/0.01); if (v>1023) v=1023; if (v<-1024) v=-1024;
+    setbits(buff,i,11,v); i+=11;
+    return i;
+}
+
+/* encode type 1034: GPS network FKP gradient --------------------------------*/
+static int encode_type1034(rtcm_t *rtcm, int sync)
+{
+    int i=24,j;
+
+    (void)sync;
+    setbitu(rtcm->buff,i,12,1034); i+=12;
+    setbitu(rtcm->buff,i,12,rtcm->staid); i+=12;
+    setbitu(rtcm->buff,i, 8,g_fkp_enc_ns); i+=8;
+    for (j=0;j<g_fkp_enc_ns;j++) i=enc_fkp_sat_bits(rtcm->buff,i,&g_fkp_enc_sat[j]);
+    rtcm->nbit=i;
+    return 1;
+}
+
+/* encode type 1035: GLONASS network FKP gradient ----------------------------*/
+static int encode_type1035(rtcm_t *rtcm, int sync)
+{
+    int i=24,j;
+
+    (void)sync;
+    setbitu(rtcm->buff,i,12,1035); i+=12;
+    setbitu(rtcm->buff,i,12,rtcm->staid); i+=12;
+    setbitu(rtcm->buff,i, 8,g_fkp_enc_ns); i+=8;
+    for (j=0;j<g_fkp_enc_ns;j++) i=enc_fkp_sat_bits(rtcm->buff,i,&g_fkp_enc_sat[j]);
+    rtcm->nbit=i;
+    return 1;
+}
+
 /* MSM signal ID table -------------------------------------------------------*/
 extern const char *msm_sig_gps[32];
 extern const char *msm_sig_glo[32];
@@ -2588,6 +2658,8 @@ extern int encode_rtcm3(rtcm_t *rtcm, int type, int subtype, int sync)
         case 1019: ret=encode_type1019(rtcm,sync);     break;
         case 1020: ret=encode_type1020(rtcm,sync);     break;
         case 1033: ret=encode_type1033(rtcm,sync);     break;
+        case 1034: ret=encode_type1034(rtcm,sync);     break;
+        case 1035: ret=encode_type1035(rtcm,sync);     break;
         case 1041: ret=encode_type1041(rtcm,sync);     break;
         case 1042: ret=encode_type1042(rtcm,sync);     break;
         case 1044: ret=encode_type1044(rtcm,sync);     break;
