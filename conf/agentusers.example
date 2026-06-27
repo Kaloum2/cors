@@ -1,0 +1,32 @@
+# NTRIP agent users — extended format (conf/agentusers)
+#
+# Columns (CSV, comma-separated):
+#   user,passwd[,allowed_modes[,region[,max_sessions]]]
+#
+# allowed_modes : pipe-separated mode names, or * for all
+#   RELAY | VRS | VRS_DYNAMIC | FKP | MAC | IMAX | AUTO
+#
+# region : * (no limit) | bbox:lat_min,lon_min,lat_max,lon_max
+#        | poly:lat1,lon1;lat2,lon2;lat3,lon3;...
+#        | lat_min,lon_min,lat_max,lon_max  (bbox shorthand)
+#        See conf/regions-fr-bj.example for France (101 départements + 18 régions)
+#        and Bénin (12 départements + pays entier).
+#
+# max_sessions : integer, or * for unlimited (default when omitted)
+#
+# Backward compatible: "user,passwd" only → all modes, no region, unlimited.
+
+# legacy user — full access (same as before)
+legacy,legacy
+
+# demo — VRS + FKP + relay, Île-de-France bbox, 1 concurrent session
+demo,demo,VRS|FKP|RELAY,bbox:48.5,1.8,49.2,3.5,1
+
+# field — polygon geofence around a service area, 2 sessions
+field,field,RELAY|AUTO,poly:48.80,2.20;48.90,2.20;48.90,2.45;48.80,2.45,2
+
+# pro — all modes, no region limit, 3 sessions
+pro,secret,*,*,3
+
+# mac-only rover fleet
+fleet,fleet,MAC|FKP,*,5

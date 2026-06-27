@@ -6,11 +6,15 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "corr.h"
+#include "policy.h"
 
 #define NTRIP_AGENT_MNTPNT  "RTCM32"
 #define NTRIP_RSP_UNAUTH    "HTTP/1.0 401 Unauthorized\r\n"
 #define NTRIP_RSP_OK_CLI    "ICY 200 OK\r\n"
+#define NTRIP_RSP_SOURCETABLE_OK "SOURCETABLE 200 OK\r\n"
 #define NTRIP_AGENT_PORT     8002
+#define NTRIP_SOURCETABLE_MAX (128*1024)
 
 typedef struct agent_del_ntripconn {
     cors_ntrip_agent_t *agent;
@@ -42,15 +46,25 @@ static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
     buf->len=suggested_size;
 }
 
+#define NTRIP_CONN_CORR  3
+
 static int test_mntpnt(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, const char *mntpnt)
 {
     cors_ntrip_source_info_t *info;
-    HASH_FIND_STR(agent->ntrip->info_tbl[0],mntpnt,info);
+    cors_mountpoint_def_t scratch;
+    const cors_mountpoint_def_t *mnt;
+    const cors_corr_ctx_t *ctx;
 
+    HASH_FIND_STR(agent->ntrip->info_tbl[0],mntpnt,info);
     strcpy(conn->mntpnt,mntpnt);
-    if (info) return 1;
-    if (strcmp(mntpnt,NTRIP_AGENT_MNTPNT)) return 0;
-    return 2;
+    if (info) return CORS_CORR_LEGACY_TYPE_RELAY;
+
+    ctx=cors_corr_ctx_get();
+    if (!ctx) return 0;
+    mnt=cors_corr_resolve_mountpoint(ctx,mntpnt,0,&scratch);
+    if (!mnt) return 0;
+    if (mnt->legacy_type>0) return mnt->legacy_type;
+    return cors_corr_legacy_type_for_mode(mnt->mode);
 }
 
 static void on_rsp_cb(uv_write_t* req, int status)
@@ -92,12 +106,139 @@ static void send_rsqc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *cn, const ch
     agent_send_data(cn,rsp,strlen(rsp));
 }
 
-static int test_auth(cors_ntrip_agent_t *agent, const char *user, const char *user_pwd)
+static void send_sourcetable(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
+                             cors_ntrip_user_t *user)
+{
+    char *body;
+    int nb;
+
+    body=calloc(1,NTRIP_SOURCETABLE_MAX);
+    if (!body) return;
+
+    nb=cors_corr_sourcetable_build(cors_corr_ctx_get(),user,body,NTRIP_SOURCETABLE_MAX-64);
+    if (nb>0) nb+=snprintf(body+nb,NTRIP_SOURCETABLE_MAX-nb,"ENDSOURCETABLE\r\n");
+
+    send_rsqc(agent,conn,NTRIP_RSP_SOURCETABLE_OK);
+    if (nb>0) agent_send_data(conn,body,nb);
+    log_trace(1,"agent sourcetable: user=%s bytes=%d\n",user?user->user:"public",nb);
+    free(body);
+}
+
+static int test_auth(cors_ntrip_agent_t *agent, const char *user, const char *user_pwd,
+                     cors_ntrip_user_t **out_user)
 {
     cors_ntrip_user_t *u;
+
+    if (out_user) *out_user=NULL;
     HASH_FIND_STR(agent->user_tbl,user,u);
     if (!u||strcmp(u->passwd,user_pwd)) return 0;
+    if (out_user) *out_user=u;
     return 1;
+}
+
+static int parse_basic_auth(cors_ntrip_agent_t *agent, const char *buff,
+                            char *user, char *user_pwd, cors_ntrip_user_t **out_user)
+{
+    char tmp[256]={0},cred[512];
+    const char *p,*q;
+    char *sep;
+    int len=0,n;
+
+    user[0]=user_pwd[0]='\0';
+    if (out_user) *out_user=NULL;
+    if (!(p=strstr(buff,"Authorization: Basic "))) return 0;
+    p+=strlen("Authorization: Basic ");
+    if (!(q=strstr(p,"\r\n"))) return 0;
+    n=(int)(q-p);
+    if (n<=0||n>=(int)sizeof(cred)-1) return 0;
+    memcpy(cred,p,n);
+    cred[n]='\0';
+    if (!decbase64(cred,n,tmp,&len)) return 0;
+    sep=strchr(tmp,':');
+    if (!sep) return 0;
+    *sep='\0';
+    strncpy(user,tmp,255);
+    user[255]='\0';
+    strncpy(user_pwd,sep+1,255);
+    user_pwd[255]='\0';
+    if (!user[0]) return 0;
+    return test_auth(agent,user,user_pwd,out_user);
+}
+
+static int count_user_sessions(cors_ntrip_agent_t *agent, const char *user)
+{
+    cors_ntrip_conn_t *c,*t;
+    int n=0;
+
+    HASH_ITER(hh,agent->conn_tbl,c,t) {
+        if (c->state&&c->user[0]&&!strcmp(c->user,user)) n++;
+    }
+    return n;
+}
+
+typedef enum {
+    POLICY_OK=0,
+    POLICY_DENY_MODE,
+    POLICY_DENY_REGION,
+    POLICY_DENY_SESSION
+} policy_result_t;
+
+static policy_result_t check_user_region(cors_ntrip_user_t *user, const double *pos)
+{
+    if (!user) return POLICY_DENY_REGION;
+    if (pos&&norm((double*)pos,3)>0.0&&
+        !cors_user_region_contains(&user->policy.region,pos)) {
+        return POLICY_DENY_REGION;
+    }
+    return POLICY_OK;
+}
+
+static int policy_should_check_region(cors_ntrip_conn_t *conn)
+{
+    if (norm(conn->pos,3)<=0.0) return 0;
+    if (!conn->policy_reg_done) return 1;
+    return timediff(timeget(),conn->policy_reg_time)>=CORS_POLICY_REGION_RECHECK_SEC;
+}
+
+static void policy_mark_region_checked(cors_ntrip_conn_t *conn)
+{
+    conn->policy_reg_done=1;
+    conn->policy_reg_time=timeget();
+}
+
+static policy_result_t check_user_policy(cors_ntrip_agent_t *agent,
+                                         cors_ntrip_user_t *user,
+                                         const char *mntpnt, const double *pos)
+{
+    cors_policy_mode_t mode;
+    policy_result_t r;
+    int nsess;
+
+    if (!user) return POLICY_DENY_MODE;
+    mode=cors_corr_mode_from_mountpoint(mntpnt);
+    if (!mode||!(user->policy.allowed_modes&mode)) return POLICY_DENY_MODE;
+    r=check_user_region(user,pos);
+    if (r!=POLICY_OK) return r;
+    nsess=count_user_sessions(agent,user->user);
+    if (!cors_policy_check_sessions(user,nsess)) return POLICY_DENY_SESSION;
+    return POLICY_OK;
+}
+
+static void deny_policy(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
+                      policy_result_t reason)
+{
+    const char *rsp=CORS_NTRIP_RSP_FORBIDDEN;
+
+    switch (reason) {
+        case POLICY_DENY_MODE:   rsp=CORS_NTRIP_RSP_FORBIDDEN_MODE; break;
+        case POLICY_DENY_REGION: rsp=CORS_NTRIP_RSP_FORBIDDEN_REGION; break;
+        case POLICY_DENY_SESSION:rsp=CORS_NTRIP_RSP_FORBIDDEN_SESSION; break;
+        default: break;
+    }
+    log_trace(1,"policy denied: user=%s mntpnt=%s reason=%d\n",
+              conn->user[0]?conn->user:"?",conn->mntpnt,reason);
+    send_rsqc(agent,conn,rsp);
+    ntripagnet_del_conn(agent,conn);
 }
 
 static int test_vstachg(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, char *new_mntpnt)
@@ -181,11 +322,32 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
                            char *buff, int nb)
 {
     char url[256]="",mntpnt[256]="",proto[256]="",*p,*q;
-    char tmp[256]={0},user[513]={0},user_pwd[256]={0},new_mntpnt[32]={0};
-    int len=0;
+    char user[513]={0},user_pwd[256]={0},new_mntpnt[32]={0};
+    cors_ntrip_user_t *u=NULL;
+    policy_result_t pres;
 
     if (conn->state) {
-        test_gga_msg(agent,conn,buff); test_vstachg(agent,conn,new_mntpnt);
+        test_gga_msg(agent,conn,buff);
+        if (conn->user[0]&&policy_should_check_region(conn)) {
+            HASH_FIND_STR(agent->user_tbl,conn->user,u);
+            if (u) {
+                pres=check_user_region(u,conn->pos);
+                if (pres==POLICY_DENY_REGION) {
+                    deny_policy(agent,conn,pres);
+                    return 0;
+                }
+                policy_mark_region_checked(conn);
+            }
+        }
+        if (conn->type==CORS_CORR_LEGACY_TYPE_NEAR) {
+            test_vstachg(agent,conn,new_mntpnt);
+        }
+        else if (conn->type==NTRIP_CONN_CORR) {
+            if (cors_corr_conn_gga(conn,conn->pos)) {
+                cors_corr_conn_output(conn,new_mntpnt,sizeof(new_mntpnt));
+            }
+            cors_corr_conn_push(conn);
+        }
         agent_upd_conn(agent,conn,str,new_mntpnt);
         return 1;
     }
@@ -198,34 +360,55 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
         ntripagnet_del_conn(agent,conn);
         return 0;
     }
-    if ((p=strchr(url,'/'))) strcpy(mntpnt,p+1);
+    if ((p=strchr(url,'/'))) {
+        if (*(p+1)) strcpy(mntpnt,p+1);
+    }
 
-    if (!*mntpnt||!(conn->type=test_mntpnt(agent,conn,mntpnt))) {
+    /* sourcetable: GET / HTTP/1.0 (mountpoint vide) */
+    if (!*mntpnt) {
+        cors_ntrip_user_t *su=NULL;
 
+        if (strstr(buff,"Authorization: Basic ")) {
+            if (!parse_basic_auth(agent,buff,user,user_pwd,&su)) {
+                send_rsqc(agent,conn,CORS_NTRIP_RSP_UNAUTHORIZED);
+                ntripagnet_del_conn(agent,conn);
+                return 0;
+            }
+        }
+        send_sourcetable(agent,conn,su);
+        ntripagnet_del_conn(agent,conn);
+        return 0;
+    }
+
+    if (!(conn->type=test_mntpnt(agent,conn,mntpnt))) {
         send_rsqc(agent,conn,"");
         ntripagnet_del_conn(agent,conn);
         return 0;
     }
-    if (!(p=strstr(buff,"Authorization: Basic "))||!(q=strstr(p,"\r\n"))) {
-        send_rsqc(agent,conn,NTRIP_RSP_UNAUTH);
+    if (!parse_basic_auth(agent,buff,user,user_pwd,&u)) {
+        send_rsqc(agent,conn,CORS_NTRIP_RSP_UNAUTHORIZED);
         ntripagnet_del_conn(agent,conn);
         return 0;
     }
-    p+=strlen("Authorization: Basic ");
-    *q='\0';
+    strncpy(conn->user,u->user,sizeof(conn->user)-1);
+    conn->user[sizeof(conn->user)-1]='\0';
 
-    if (*p&&!decbase64(p,q-p,tmp,&len)) {
-        if ((p=strstr(tmp,":"))) *p='\0';
-        strcpy(user,tmp);
-        if (++p&&*p) strcpy(user_pwd,p);
-    }
-    if (!test_auth(agent,user,user_pwd)) {
-        send_rsqc(agent,conn,NTRIP_RSP_UNAUTH);
-        ntripagnet_del_conn(agent,conn);
+    pres=check_user_policy(agent,u,mntpnt,conn->pos);
+    if (pres!=POLICY_OK) {
+        deny_policy(agent,conn,pres);
         return 0;
     }
+    if (norm(conn->pos,3)>0.0) policy_mark_region_checked(conn);
+
     conn->state=1;
     send_rsqc(agent,conn,NTRIP_RSP_OK_CLI);
+    if (conn->type==NTRIP_CONN_CORR) {
+        cors_mountpoint_def_t scratch;
+        const cors_mountpoint_def_t *mnt;
+
+        mnt=cors_corr_resolve_mountpoint(cors_corr_ctx_get(),mntpnt,0,&scratch);
+        if (mnt) cors_corr_conn_begin(conn,mnt);
+    }
     agent_upd_conn(agent,conn,str,mntpnt);
     return 1;
 }
@@ -283,6 +466,8 @@ static void do_del_ntripconn(agent_del_ntripconn_t *data)
 
     HASH_FIND_PTR(agent->conn_tbl,&data->conn->conn,c);
     if (!c) return;
+
+    if (c->type==NTRIP_CONN_CORR) cors_corr_conn_end(c);
 
     uv_mutex_lock(&agent->cq_lock);
     HASH_FIND_STR(agent->cq_tbl,data->conn->mntpnt,cq);
@@ -441,7 +626,10 @@ static void ntrip_agent_thread(void *ntrip_agent_arg)
     int ret=uv_listen((uv_stream_t*)agent->svr,SOMAXCONN,on_new_ntripconn);
     if (ret) {
         log_trace(1,"agent error %s\n",uv_strerror(ret));
-        free(loop); return;
+        free(agent->svr);
+        agent->svr=NULL;
+        free(loop);
+        return;
     }
     agent_init(loop,agent);
 
@@ -452,29 +640,10 @@ static void ntrip_agent_thread(void *ntrip_agent_arg)
 
 static void read_users_file(cors_ntrip_agent_t *agent, const char *users_file)
 {
-    char buff[1024],*p,*q,*val[64];
-    cors_ntrip_user_t *user;
-    int n;
-    FILE *fp;
-
-    if (!(fp=fopen(users_file,"r"))) {
-        return;
+    if (!users_file||!*users_file) return;
+    if (!cors_policy_read_users(users_file,&agent->user_tbl)) {
+        log_trace(1,"agent: users file not found or empty: %s\n",users_file);
     }
-    while (fgets(buff,sizeof(buff),fp)) {
-        for (n=0,p=buff;*p&&n<16;p=q+1) {
-            if ((q=strchr(p,','))||(q=strchr(p,'#'))) {val[n++]=p; *q='\0';}
-            else break;
-        }
-        if (n<2) continue;
-
-        HASH_FIND_STR(agent->user_tbl,val[0],user);
-        if (user) continue;
-        user=calloc(1,sizeof(*user));
-        strcpy(user->user,val[0]);
-        strcpy(user->passwd,val[1]);
-        HASH_ADD_STR(agent->user_tbl,user,user);
-    }
-    fclose(fp);
 }
 
 extern int cors_ntrip_agent_start(cors_ntrip_agent_t *agent, cors_ntrip_t *ntrip, const char *users_file)
@@ -493,7 +662,7 @@ extern int cors_ntrip_agent_start(cors_ntrip_agent_t *agent, cors_ntrip_t *ntrip
 extern void cors_ntrip_agent_close(cors_ntrip_agent_t *agent)
 {
     agent->state=0;
-    uv_async_send(agent->close);
+    if (agent->close) uv_async_send(agent->close);
     uv_thread_join(&agent->thread);
 
     cors_ntrip_conn_t *cq,*ct;
@@ -508,22 +677,22 @@ extern void cors_ntrip_agent_close(cors_ntrip_agent_t *agent)
         }
     }
     cors_ntrip_user_t *u,*s;
-    HASH_ITER(hh,agent->user_tbl,u,s) {
-        HASH_DEL(agent->user_tbl,u); free(u);
-    }
+    cors_policy_free_users(&agent->user_tbl);
 }
 
 extern int cors_ntrip_agent_add_user(cors_ntrip_agent_t *agent, const char *user, const char *passwd)
 {
+    cors_ntrip_user_t *u;
+
     if (!agent->state) return 0;
 
-    cors_ntrip_user_t *u;
     HASH_FIND_STR(agent->user_tbl,user,u);
-    if (user) return 0;
+    if (u) return 0;
 
-    u=calloc(1,sizeof(*user));
-    strcpy(u->user,user);
-    strcpy(u->passwd,passwd);
+    u=calloc(1,sizeof(*u));
+    strncpy(u->user,user,sizeof(u->user)-1);
+    strncpy(u->passwd,passwd,sizeof(u->passwd)-1);
+    cors_user_policy_init(&u->policy);
     HASH_ADD_STR(agent->user_tbl,user,u);
     return 1;
 }
@@ -537,6 +706,7 @@ extern int cors_ntrip_agent_del_user(cors_ntrip_agent_t *agent, const char *user
     if (!u) return 0;
 
     HASH_DEL(agent->user_tbl,u);
+    cors_user_policy_free(&u->policy);
     free(u);
     return 1;
 }
