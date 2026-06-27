@@ -6,6 +6,7 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "mcors.h"
 #include "options.h"
 
 #define SRTK_STRICT_TIME_SYNC    1
@@ -195,6 +196,10 @@ static void do_rtkpos_work(rtkpos_task_t *data)
 
     cors_updssat(&cors->ssats,rtk->ssat,bl->rover_srcid,2,rtk->sol.time);
     cors_updblsol(&cors->blsols,bl,rtk,bl->base_srcid,bl->rover_srcid);
+    if (cors->role == CORS_ROLE_WORKER && cors->mproc_shm) {
+        cors_shm_publish_blsol((cors_shm_t *)cors->mproc_shm, rtk,
+                               bl->base_srcid, bl->rover_srcid);
+    }
 
     freeobs(data->robs);
     freeobs(data->bobs); free(data);

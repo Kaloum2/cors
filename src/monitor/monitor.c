@@ -135,7 +135,10 @@ static void monitor_thread(void *monitor_arg)
     int ret=uv_listen((uv_stream_t*)monitor->svr,SOMAXCONN,on_new_connection);
     if (ret) {
         log_trace(1,"monitor error %s\n",uv_strerror(ret));
-        free(loop); return;
+        free(monitor->svr);
+        monitor->svr=NULL;
+        free(loop);
+        return;
     }
     monitor->close=calloc(1,sizeof(uv_async_t));
     monitor->close->data=monitor;
@@ -177,7 +180,7 @@ extern int cors_monitor_start(cors_monitor_t *monitor, cors_t *cors)
 
 extern void cors_monitor_close(cors_monitor_t *monitor)
 {
-    uv_async_send(monitor->close);
+    if (monitor->close) uv_async_send(monitor->close);
     uv_thread_join(&monitor->thread);
 
     monitor_src_close(&monitor->src_qs);

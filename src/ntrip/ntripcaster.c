@@ -6,6 +6,7 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "mcors.h"
 
 static int on_read_cb(void* userdata, const uint8_t *data, int n)
 {
@@ -16,7 +17,11 @@ static int on_read_cb(void* userdata, const uint8_t *data, int n)
     log_trace(1,"[%2d] receive RTCM data: %d bytes\n",src->ID,n);
 
     cors_rtcm_decode(&cors->rtcm_decoder,data,n,src->ID);
-    cors_ntrip_agent_send(&cors->agent,src->name,data,n,&cors->nav.data);
+    if (cors->role == CORS_ROLE_WORKER && cors->mproc_shm) {
+        cors_shm_publish_rtcm((cors_shm_t *)cors->mproc_shm, data, n, src->ID);
+    } else {
+        cors_ntrip_agent_send(&cors->agent,src->name,data,n,&cors->nav.data);
+    }
     return n;
 }
 
@@ -81,7 +86,11 @@ static void ntrip_caster_thread(void *caster_arg)
             if (!cors_ntripcli_start(loop,&s->cli,on_read_cb,info->name,info->addr,info->port,
                     info->user,info->passwd,
                     info->mntpnt,info->pos)) {
+                log_trace(1,"addsource: failed to connect to NTRIP caster for '%s' (%s:%d/%s)\n",
+                        info->name,info->addr,info->port,info->mntpnt);
                 free(s);
+                HASH_DEL(argv->info_tbl,info);
+                free(info);
                 continue;
             }
         }
@@ -167,6 +176,8 @@ static void do_add_source(ntrip_add_source_t *data)
     if (!info->type) {
         if (!cors_ntripcli_start(ctr->loop,&s->cli,on_read_cb,info->name,info->addr,info->port,
                 info->user,info->passwd,info->mntpnt,info->pos)) {
+            log_trace(1,"addsource: failed to connect to NTRIP caster for '%s' (%s:%d/%s)\n",
+                    info->name,info->addr,info->port,info->mntpnt);
             free(s); free(data); free(info);
             return;
         }

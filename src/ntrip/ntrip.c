@@ -6,6 +6,7 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "mcors.h"
 
 #define MAX_SRCS  1024
 
@@ -69,6 +70,58 @@ static int read_sources_file(cors_ntrip_t *ntrip, const char *file)
         HASH_ADD(hh,ntrip->info_tbl[0],name,strlen(info_name->name),info_name);
         HASH_ADD(ii,ntrip->info_tbl[1],ID,sizeof(int),info_id);
         kd_insert(ntrip->src_kdtree,info_name->pos,info_name);
+    }
+    fclose(fp);
+    return HASH_COUNT(ntrip->info_tbl[0]);
+}
+
+static int read_partition_file(cors_ntrip_t *ntrip, const char *file, cors_shm_t *shm, int worker_id)
+{
+    FILE *fp;
+    if (!(fp = fopen(file, "r"))) {
+        log_trace(2, "read partition file fail: %s\n", file);
+        return -1;
+    }
+    cors_ntrip_source_info_t *info_name, *info_id;
+    char buff[256], *p, *q, *val[16];
+    double pos[3];
+    int n, srcid;
+
+    while (fgets(buff, sizeof(buff), fp)) {
+        for (n = 0, p = buff; *p && n < 16; p = q + 1) {
+            if ((q = strchr(p, ',')) || (q = strchr(p, '#'))) {
+                val[n++] = p;
+                *q = '\0';
+            } else break;
+        }
+        if (n < 6) continue;
+        HASH_FIND_STR(ntrip->info_tbl[0], val[0], info_name);
+        if (info_name) continue;
+
+        srcid = cors_shm_find_srcid(shm, val[0]);
+        if (srcid <= 0) continue;
+
+        info_name = calloc(1, sizeof(*info_name));
+        snprintf(info_name->name, sizeof(info_name->name), "%s", val[0]);
+        snprintf(info_name->addr, sizeof(info_name->addr), "%s", val[1]);
+        snprintf(info_name->user, sizeof(info_name->user), "%s", val[3]);
+        snprintf(info_name->passwd, sizeof(info_name->passwd), "%s", val[4]);
+        snprintf(info_name->mntpnt, sizeof(info_name->mntpnt), "%s", val[5]);
+        info_name->port = atoi(val[2]);
+        info_name->ID = srcid;
+
+        if (n >= 9) {
+            pos[0] = atof(val[6]) * D2R;
+            pos[1] = atof(val[7]) * D2R;
+            pos[2] = atof(val[8]);
+            pos2ecef(pos, info_name->pos);
+        }
+        info_id = calloc(1, sizeof(*info_id));
+        *info_id = *info_name;
+
+        HASH_ADD(hh, ntrip->info_tbl[0], name, strlen(info_name->name), info_name);
+        HASH_ADD(ii, ntrip->info_tbl[1], ID, sizeof(int), info_id);
+        kd_insert(ntrip->src_kdtree, info_name->pos, info_name);
     }
     fclose(fp);
     return HASH_COUNT(ntrip->info_tbl[0]);
@@ -149,18 +202,39 @@ static void ntrip_thread(void *ntrip_arg)
     free(loop);
 }
 
-extern int cors_ntrip_start(cors_ntrip_t *ntrip, cors_t *cors, const char *sources_file)
+extern int cors_ntrip_load_sources(cors_ntrip_t *ntrip, cors_t *cors, const char *sources_file)
 {
-    ntrip->src_kdtree=kd_create(3);
-    ntrip->cors=cors;
-    read_sources_file(ntrip,sources_file);
+    if (!ntrip->src_kdtree) ntrip->src_kdtree = kd_create(3);
+    ntrip->cors = cors;
+    return read_sources_file(ntrip, sources_file);
+}
 
-    if (uv_thread_create(&ntrip->thread,ntrip_thread,ntrip)) {
-        log_trace(1,"ntrip thread create error\n");
+extern int cors_ntrip_load_partition(cors_ntrip_t *ntrip, cors_t *cors,
+                                       const char *partition_file, cors_shm_t *shm,
+                                       int worker_id)
+{
+    (void)worker_id;
+    if (!ntrip->src_kdtree) ntrip->src_kdtree = kd_create(3);
+    ntrip->cors = cors;
+    return read_partition_file(ntrip, partition_file, shm, worker_id);
+}
+
+extern int cors_ntrip_start_casters(cors_ntrip_t *ntrip)
+{
+    if (uv_thread_create(&ntrip->thread, ntrip_thread, ntrip)) {
+        log_trace(1, "ntrip thread create error\n");
         return 0;
     }
-    log_trace(1,"ntrip thread create ok\n");
+    log_trace(1, "ntrip thread create ok\n");
     return 1;
+}
+
+extern int cors_ntrip_start(cors_ntrip_t *ntrip, cors_t *cors, const char *sources_file)
+{
+    ntrip->src_kdtree = kd_create(3);
+    ntrip->cors = cors;
+    read_sources_file(ntrip, sources_file);
+    return cors_ntrip_start_casters(ntrip);
 }
 
 extern void cors_ntrip_close(cors_ntrip_t *ntrip)
@@ -177,6 +251,7 @@ extern void cors_ntrip_close(cors_ntrip_t *ntrip)
 static int ntrip_add_source_prc(cors_ntrip_t *ntrip, cors_ntrip_source_info_t *info)
 {
     cors_ntrip_caster_t *c,*t,*s=NULL;
+    int srcid;
 
     HASH_ITER(hh,ntrip->ctr_tbl,c,t) {
         if (HASH_COUNT(c->src_tbl)>=MAX_SRCS) continue;
@@ -184,27 +259,35 @@ static int ntrip_add_source_prc(cors_ntrip_t *ntrip, cors_ntrip_source_info_t *i
         break;
     }
     info->ID=generate_source_id();
+    srcid=info->ID;
 
     if (s) {
-        return cors_ntrip_caster_add_source(s,info);
+        return cors_ntrip_caster_add_source(s,info) ? srcid : -1;
     }
     cors_ntrip_caster_t *ctr=calloc(1,sizeof(*ctr));
+    cors_ntrip_source_info_t *info_tbl=NULL;
     ctr->ntrip=ntrip;
     ctr->ID=HASH_COUNT(ntrip->ctr_tbl);
 
-    if (cors_ntrip_caster_start(ctr,info)) {
-        HASH_ADD_INT(ntrip->ctr_tbl,ID,ctr);
+    HASH_ADD_STR(info_tbl,name,info);
+    if (!cors_ntrip_caster_start(ctr,info_tbl)) {
+        log_trace(1,"addsource: failed to start NTRIP caster thread for '%s'\n",info->name);
+        HASH_DEL(info_tbl,info);
+        free(info);
+        free(ctr);
+        return -1;
     }
-    return 1;
+    HASH_ADD_INT(ntrip->ctr_tbl,ID,ctr);
+    return srcid;
 }
 
-extern void cors_ntrip_add_source(cors_ntrip_t *ntrip, cors_ntrip_source_info_t *info)
+extern int cors_ntrip_add_source(cors_ntrip_t *ntrip, cors_ntrip_source_info_t *info)
 {
     cors_ntrip_source_info_t *s;
 
     HASH_FIND_STR(ntrip->info_tbl[0],info->name,s);
-    if (s) return;
-    ntrip_add_source_prc(ntrip,info);
+    if (s) return 0;
+    return ntrip_add_source_prc(ntrip,info);
 }
 
 extern void cors_ntrip_del_source(cors_ntrip_t *ntrip, const char *name)

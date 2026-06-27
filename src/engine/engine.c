@@ -8,6 +8,10 @@
 #include "cors.h"
 #include "vt.h"
 #include "options.h"
+#include "corr.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define CMDPROMPT   "cors-engine> "
 #define MAXCMD      256
@@ -66,36 +70,87 @@ static void cmd_stop(char **args, int narg, vt_t *vt)
     stopcors(vt);
 }
 
+static int resolve_host(const char *host)
+{
+    struct addrinfo hint={0}, *res;
+
+    hint.ai_family=AF_UNSPEC;
+    hint.ai_socktype=SOCK_STREAM;
+    if (getaddrinfo(host,NULL,&hint,&res)) return 0;
+    freeaddrinfo(res);
+    return 1;
+}
+
 static void cmd_add_source(char **args, int narg, vt_t *vt)
 {
+    cors_ntrip_source_info_t *info;
+    double pos[3];
+    double srcpos[3]={0};
+    int port, ret;
+
     if (!cors.state) {
         vt_printf(vt,"cors server has not been started\n");
         return;
     }
-    if (narg<7)
-    {
-        printf("Insufficient arguments \n");
+    if (narg<7) {
+        vt_printf(vt,"addsource: insufficient arguments (name addr port user passwd mountpoint required)\n");
         return;
     }
-    if (inet_addr(args[2])==INADDR_NONE) return;
+    if (!*args[1]) {
+        vt_printf(vt,"addsource: source name is required\n");
+        return;
+    }
+    if (!*args[2]) {
+        vt_printf(vt,"addsource: caster address is required\n");
+        return;
+    }
+    if (!resolve_host(args[2])) {
+        vt_printf(vt,"addsource: cannot resolve host '%s'\n",args[2]);
+        return;
+    }
+    port=atoi(args[3]);
+    if (port<=0||port>65535) {
+        vt_printf(vt,"addsource: invalid port '%s'\n",args[3]);
+        return;
+    }
+    if (!*args[6]) {
+        vt_printf(vt,"addsource: mountpoint is required\n");
+        return;
+    }
 
-    double pos[3];
-    cors_ntrip_source_info_t *info=calloc(1,sizeof(*info));
+    info=calloc(1,sizeof(*info));
     strcpy(info->name,args[1]);
     strcpy(info->addr,args[2]);
     strcpy(info->user,args[4]);
     strcpy(info->passwd,args[5]);
     strcpy(info->mntpnt,args[6]);
-    info->port=atoi(args[3]);
+    info->port=port;
 
-    if (narg>=9) {
+    if (narg>=10) {
         pos[0]=atof(args[7])*D2R;
         pos[1]=atof(args[8])*D2R;
         pos[2]=atof(args[9]);
         pos2ecef(pos,info->pos);
     }
-    cors_ntrip_add_source(&cors.ntrip,info);
-    cors_nrtk_add_source(&cors.nrtk,info->ID,info->pos);
+    matcpy(srcpos,info->pos,1,3);
+
+    ret=cors_ntrip_add_source(&cors.ntrip,info);
+    if (ret==0) {
+        vt_printf(vt,"addsource: source '%s' already exists\n",args[1]);
+        free(info);
+        return;
+    }
+    if (ret<0) {
+        vt_printf(vt,"addsource: failed to add source '%s' (caster error)\n",args[1]);
+        free(info);
+        return;
+    }
+    if (norm(srcpos,3)>0.0) {
+        cors_nrtk_add_source(&cors.nrtk,ret,srcpos);
+    }
+    else {
+        vt_printf(vt,"addsource: warning: no coordinates given, NRTK triangulation skipped for '%s'\n",args[1]);
+    }
     vt_printf(vt,"\n");
 }
 
@@ -172,10 +227,11 @@ static void prnavidata(vt_t *vt)
 
 static void cmd_navidata(char **args, int narg, vt_t *vt)
 {
+    int cycle=0;
+
     if (!cors.state) return;
 
-    int cycle=0;
-    if (narg>1) cycle=(int)(atof(args[1])*1000.0);
+    if (narg>=2) cycle=(int)(atof(args[1])*1000.0);
 
     while (!vt_chkbrk(vt)) {
         prnavidata(vt);
@@ -230,21 +286,38 @@ static void probserv(vt_t *vt, int nf, const char *name)
     }
 }
 
+static void probserv_all(vt_t *vt, int nf)
+{
+    cors_ntrip_source_info_t *s,*t;
+
+    HASH_ITER(hh,cors.ntrip.info_tbl[0],s,t) {
+        probserv(vt,nf,s->name);
+    }
+}
+
 static void cmd_observ(char **args, int narg, vt_t *vt)
 {
     int i,nf=2,cycle=0;
+    const char *name;
 
     if (!cors.state) {
         vt_printf(vt,"cors server has not been started\n");
         return;
     }
-    if (narg<3) return;
-
-    for (i=2;i<narg;i++) {
-        if (sscanf(args[i],"-%d",&nf)<1) cycle=(int)(atof(args[i])*1000.0);
+    if (narg<2) {
+        name="all";
+    }
+    else {
+        name=args[1];
+    }
+    if (narg>=3) {
+        for (i=2;i<narg;i++) {
+            if (sscanf(args[i],"-%d",&nf)<1) cycle=(int)(atof(args[i])*1000.0);
+        }
     }
     while (!vt_chkbrk(vt)) {
-        probserv(vt,nf,args[1]);
+        if (!strcmp(name,"all")) probserv_all(vt,nf);
+        else probserv(vt,nf,name);
         if (cycle>0) sleepms(cycle); else return;
     }
     vt_printf(vt,"\n");
@@ -301,21 +374,38 @@ static void prsatellite(vt_t *vt, int nf, const char *name)
     }
 }
 
+static void prsatellite_all(vt_t *vt, int nf)
+{
+    cors_ntrip_source_info_t *s,*t;
+
+    HASH_ITER(hh,cors.ntrip.info_tbl[0],s,t) {
+        prsatellite(vt,nf,s->name);
+    }
+}
+
 static void cmd_satellite(char **args, int narg, vt_t *vt)
 {
     int i,nf=2,cycle=0;
+    const char *name;
 
     if (!cors.state) {
         vt_printf(vt,"cors server has not been started\n");
         return;
     }
-    if (narg<3) return;
-
-    for (i=2;i<narg;i++) {
-        if (sscanf(args[i],"-%d",&nf)<1) cycle=(int)(atof(args[i])*1000.0);
+    if (narg<2) {
+        name="all";
+    }
+    else {
+        name=args[1];
+    }
+    if (narg>=3) {
+        for (i=2;i<narg;i++) {
+            if (sscanf(args[i],"-%d",&nf)<1) cycle=(int)(atof(args[i])*1000.0);
+        }
     }
     while (!vt_chkbrk(vt)) {
-        prsatellite(vt,nf,args[1]);
+        if (!strcmp(name,"all")) prsatellite_all(vt,nf);
+        else prsatellite(vt,nf,name);
         if (cycle>0) sleepms(cycle); else return;
     }
     vt_printf(vt,"\n");
@@ -440,16 +530,18 @@ static void prmonirtcm_msg(vt_t *vt, const char *name)
 
 static void cmd_monirtcm(char **args, int narg, vt_t *vt)
 {
-    int i,cycle=0;
+    int cycle=0;
 
     if (!cors.state) {
         vt_printf(vt,"cors server has not been started\n");
         return;
     }
-    if (narg<3) return;
-    if (narg>3) {
-        cycle=(int)(atof(args[3])*1000.0);
+    if (narg<3) {
+        vt_printf(vt,"monirtcm: usage: monirtcm -sta|-msg <station|all> [cycle]\n");
+        return;
     }
+    if (narg>=4) cycle=(int)(atof(args[3])*1000.0);
+
     while (!vt_chkbrk(vt)) {
         if (!strcmp(args[1],"-sta")) prmonirtcm_sta(vt,args[2]);
         if (!strcmp(args[1],"-msg")) prmonirtcm_msg(vt,args[2]);
@@ -704,6 +796,127 @@ static void cmd_showdtrigs(char **args, int narg, vt_t *vt)
     }
 }
 
+static cors_ntrip_source_info_t *srcinfo_by_id(int id)
+{
+    cors_ntrip_source_info_t *s;
+
+    HASH_FIND(ii,cors.ntrip.info_tbl[1],&id,sizeof(int),s);
+    return s;
+}
+
+static void json_escape_str(FILE *fp, const char *s)
+{
+    const char *p;
+
+    fputc('"',fp);
+    for (p=s? s:"";*p;p++) {
+        if (*p=='"'||*p=='\\') fputc('\\',fp);
+        fputc(*p,fp);
+    }
+    fputc('"',fp);
+}
+
+static int export_dtrig_json(const char *json_path, vt_t *vt)
+{
+    cors_dtrig_vertex_t *v,*vt_iter;
+    cors_dtrig_t *d,*dt;
+    cors_ntrip_source_info_t *info;
+    double pos_llh[3];
+    FILE *fp;
+    int first_sta=1,first_tri=1;
+
+    if (HASH_COUNT(cors.nrtk.dtrig_net.vertexs)<=0) {
+        vt_printf(vt,"plotdtrigs: no mesh vertices (add sources with coordinates)\n");
+        return -1;
+    }
+    fp=fopen(json_path,"w");
+    if (!fp) {
+        vt_printf(vt,"plotdtrigs: cannot write '%s'\n",json_path);
+        return -1;
+    }
+    fprintf(fp,"{\"stations\":[");
+    HASH_ITER(hh,cors.nrtk.dtrig_net.vertexs,v,vt_iter) {
+        info=srcinfo_by_id(v->srcid);
+        ecef2pos(v->pos,pos_llh);
+        if (!first_sta) fputc(',',fp);
+        first_sta=0;
+        fprintf(fp,"{\"id\":%d,\"name\":",v->srcid);
+        json_escape_str(fp,info? info->name:"?");
+        fprintf(fp,",\"lat\":%.8f,\"lon\":%.8f,\"h\":%.3f}",
+                pos_llh[0]*R2D,pos_llh[1]*R2D,pos_llh[2]);
+    }
+    fprintf(fp,"],\"triangles\":[");
+    HASH_ITER(hh,cors.nrtk.dtrig_net.dtrigs,d,dt) {
+        if (!d->vt[0]||!d->vt[1]||!d->vt[2]) continue;
+        if (!first_tri) fputc(',',fp);
+        first_tri=0;
+        fprintf(fp,"{\"id\":");
+        json_escape_str(fp,d->id);
+        fprintf(fp,",\"vertices\":[%d,%d,%d]}",
+                d->vt[0]->srcid,d->vt[1]->srcid,d->vt[2]->srcid);
+    }
+    fprintf(fp,"]}");
+    fclose(fp);
+    return 0;
+}
+
+static const char *find_plot_dtrigs_script(void)
+{
+    static const char *paths[]={
+        "../test/e2e/plot_dtrigs.py",
+        "test/e2e/plot_dtrigs.py",
+        "../../test/e2e/plot_dtrigs.py",
+        NULL
+    };
+    int i;
+    FILE *fp;
+
+    for (i=0;paths[i];i++) {
+        fp=fopen(paths[i],"r");
+        if (fp) {
+            fclose(fp);
+            return paths[i];
+        }
+    }
+    return NULL;
+}
+
+static void cmd_plotdtrigs(char **args, int narg, vt_t *vt)
+{
+    const char *json_path="dtrig_mesh.json";
+    const char *script;
+    char html_path[MAXSTR],cmd[MAXSTR*2];
+    int ret,n_tri,n_sta;
+
+    if (!cors.state) {
+        vt_printf(vt,"cors server has not been started\n");
+        return;
+    }
+    if (narg>=2) snprintf(html_path,sizeof(html_path),"%s",args[1]);
+    else snprintf(html_path,sizeof(html_path),"dtrig_mesh.html");
+
+    if (export_dtrig_json(json_path,vt)<0) return;
+
+    n_sta=HASH_COUNT(cors.nrtk.dtrig_net.vertexs);
+    n_tri=HASH_COUNT(cors.nrtk.dtrig_net.dtrigs);
+    vt_printf(vt,"plotdtrigs: exported %s (%d stations, %d triangles)\n",json_path,n_sta,n_tri);
+
+    script=find_plot_dtrigs_script();
+    if (!script) {
+        vt_printf(vt,"plotdtrigs: run manually:\n");
+        vt_printf(vt,"  python3 test/e2e/plot_dtrigs.py %s %s\n",json_path,html_path);
+        return;
+    }
+    snprintf(cmd,sizeof(cmd),"python3 \"%s\" \"%s\" \"%s\"",script,json_path,html_path);
+    ret=system(cmd);
+    if (ret!=0) {
+        vt_printf(vt,"plotdtrigs: plot script failed (exit %d)\n",ret);
+        vt_printf(vt,"plotdtrigs: run manually: python3 %s %s %s\n",script,json_path,html_path);
+        return;
+    }
+    vt_printf(vt,"plotdtrigs: map written to %s (open in a browser)\n",html_path);
+}
+
 static void cmd_showbls(char **args, int narg, vt_t *vt)
 {
     const char *solstr[]={"------","FIX","FLOAT","SBAS","DGPS","SINGLE","PPP",""};
@@ -765,6 +978,29 @@ static void cmd_showusers(char **args, int narg, vt_t *vt)
     }
 }
 
+static void cmd_showmodes(char **args, int narg, vt_t *vt)
+{
+    cors_mountpoint_def_t *m,*t;
+    const cors_corr_ctx_t *ctx=cors_corr_ctx_get();
+
+    (void)args; (void)narg;
+    if (!cors.state) {
+        vt_printf(vt,"cors server has not been started\n");
+        return;
+    }
+    if (!ctx||!ctx->registry) {
+        vt_printf(vt,"correction registry not initialized\n");
+        return;
+    }
+    vt_printf(vt,"%-12s %-14s %-20s %s\n","MOUNTPOINT","MODE","FORMAT","SOURCE");
+    HASH_ITER(hh,ctx->registry->mnt_tbl,m,t) {
+        vt_printf(vt,"%-12s %-14s %-20s %s\n",
+                  m->name,cors_corr_mode_str(m->mode),
+                  m->format[0]?m->format:"RTCM3",
+                  m->source[0]?m->source:"-");
+    }
+}
+
 static void cmd_showvstas(char **args, int narg, vt_t *vt)
 {
     cors_vrs_sta_t *s,*t;
@@ -778,8 +1014,8 @@ static void con_thread(void *arg)
     const char *cmds[]={
             "start","stop","addsource","delsource","loadopt",
             "navidata","observ","satellite","sourceinfo","monirtcm",
-            "rtkpos","addvsta","delvsta","showdtrigs","showbls","showsubnet","adduser","deluser",
-            "showvstas","showusers","shutdown",""
+            "rtkpos","addvsta","delvsta","showdtrigs","plotdtrigs","showbls","showsubnet","adduser","deluser",
+            "showvstas","showusers","showmodes","shutdown",""
     };
     char buff[MAXCMD],*args[MAXARG],*p;
     int i,j,narg;
@@ -816,13 +1052,15 @@ static void con_thread(void *arg)
             case 11: cmd_addvsta      (args,narg,con->vt); break;
             case 12: cmd_delvsta      (args,narg,con->vt); break;
             case 13: cmd_showdtrigs   (args,narg,con->vt); break;
-            case 14: cmd_showbls      (args,narg,con->vt); break;
-            case 15: cmd_showsubnet   (args,narg,con->vt); break;
-            case 16: cmd_adduser      (args,narg,con->vt); break;
-            case 17: cmd_deluser      (args,narg,con->vt); break;
-            case 18: cmd_showvstas    (args,narg,con->vt); break;
-            case 19: cmd_showusers    (args,narg,con->vt); break;
-            case 20:
+            case 14: cmd_plotdtrigs   (args,narg,con->vt); break;
+            case 15: cmd_showbls      (args,narg,con->vt); break;
+            case 16: cmd_showsubnet   (args,narg,con->vt); break;
+            case 17: cmd_adduser      (args,narg,con->vt); break;
+            case 18: cmd_deluser      (args,narg,con->vt); break;
+            case 19: cmd_showvstas    (args,narg,con->vt); break;
+            case 20: cmd_showusers    (args,narg,con->vt); break;
+            case 21: cmd_showmodes    (args,narg,con->vt); break;
+            case 22:
                 if (!strcmp(args[0],"shutdown")) {
                     vt_printf(con->vt,"cors server shutdown ...\n");
                     sleepms(1000);

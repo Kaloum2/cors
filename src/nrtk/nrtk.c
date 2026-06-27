@@ -129,10 +129,11 @@ static int nrtk_init_dtrignet(cors_nrtk_t *nrtk)
     cors_dtrig_edge_t **edge,*e,*et;
     int i=-1;
 
+    cors_dtrignet_init(&nrtk->dtrig_net);
+
     if (HASH_CNT(ii,info_tbl)<=0) {
         return 0;
     }
-    cors_dtrignet_init(&nrtk->dtrig_net);
 
     HASH_ITER(ii,info_tbl,info,t) {
         cors_dtrignet_add_vertex(dtg,info->pos,info->ID,NULL,NULL);

@@ -6,6 +6,8 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "mcors.h"
+#include "corr.h"
 
 static void close_cb(uv_async_t* handle)
 {
@@ -30,6 +32,7 @@ static void start_cors(cors_t *cors)
     cors->monitor.port=cors->opt.monitor_port;
 
     cors_ntrip_start(&cors->ntrip,cors,cors->opt.ntrip_sources_file);
+    cors_corr_init(cors,&cors->agent,"conf/mountpoints");
     cors_ntrip_agent_start(&cors->agent,&cors->ntrip,cors->opt.agent_user_file);
     cors_rtcm_decoder_start(&cors->rtcm_decoder,cors);
     cors_pnt_start(&cors->pnt,cors);
@@ -37,6 +40,41 @@ static void start_cors(cors_t *cors)
     cors_nrtk_start(&cors->nrtk,cors);
     cors_vrs_start(&cors->vrs,cors,&cors->nrtk,cors->opt.vstas_file);
     cors_monitor_start(&cors->monitor,cors);
+}
+
+static void start_cors_worker(cors_t *cors)
+{
+    cors_shm_t *shm = (cors_shm_t *)cors->mproc_shm;
+
+    cors_initssat(&cors->ssats);
+    cors_initobs(&cors->obs);
+    cors_initnav(&cors->nav);
+    cors_initsta(&cors->stas);
+
+    cors_ntrip_load_partition(&cors->ntrip, cors, cors->opt.ntrip_sources_file, shm,
+                              cors->mproc_worker_id);
+    cors_ntrip_start_casters(&cors->ntrip);
+    cors_rtcm_decoder_start(&cors->rtcm_decoder, cors);
+    cors_pnt_start(&cors->pnt, cors);
+    cors_srtk_start(&cors->srtk, cors, NULL, cors->opt.baselines_file);
+}
+
+static void start_cors_supervisor(cors_t *cors)
+{
+    cors_initssat(&cors->ssats);
+    cors_initobs(&cors->obs);
+    cors_initnav(&cors->nav);
+    cors_initsta(&cors->stas);
+
+    strcpy(cors->monitor.bstas_info_file, cors->opt.bstas_info_file);
+    cors->monitor.port = cors->opt.monitor_port;
+
+    cors_ntrip_load_sources(&cors->ntrip, cors, cors->opt.ntrip_sources_file);
+    cors_corr_init(cors,&cors->agent,"conf/mountpoints");
+    cors_ntrip_agent_start(&cors->agent, &cors->ntrip, cors->opt.agent_user_file);
+    cors_nrtk_start(&cors->nrtk, cors);
+    cors_vrs_start(&cors->vrs, cors, &cors->nrtk, cors->opt.vstas_file);
+    cors_monitor_start(&cors->monitor, cors);
 }
 
 static void cors_thread(void *cors_arg)
@@ -53,7 +91,9 @@ static void cors_thread(void *cors_arg)
     uv_timer_init(loop,cors->timer_stat);
     uv_timer_start(cors->timer_stat,on_timer_stat_cb,0,10000);
 
-    start_cors(cors);
+    if (cors->role == CORS_ROLE_WORKER) start_cors_worker(cors);
+    else if (cors->role == CORS_ROLE_SUPERVISOR) start_cors_supervisor(cors);
+    else start_cors(cors);
 
     uv_run(loop,UV_RUN_DEFAULT);
     close_uv_loop(loop);
@@ -80,6 +120,38 @@ extern int cors_start(cors_t* cors, const cors_opt_t *opt)
     return 1;
 }
 
+extern int cors_start_worker(cors_t *cors, const cors_opt_t *opt,
+                             cors_shm_t *shm, int worker_id)
+{
+    cors->opt = *opt;
+    cors->role = CORS_ROLE_WORKER;
+    cors->mproc_shm = shm;
+    cors->mproc_worker_id = worker_id;
+
+    if (uv_thread_create(&cors->thread, cors_thread, cors)) {
+        log_trace(1, "cors worker thread create error\n");
+        return 0;
+    }
+    cors->state = 1;
+    log_trace(1, "cors worker %d started\n", worker_id);
+    return 1;
+}
+
+extern int cors_start_supervisor(cors_t *cors, const cors_opt_t *opt, cors_shm_t *shm)
+{
+    cors->opt = *opt;
+    cors->role = CORS_ROLE_SUPERVISOR;
+    cors->mproc_shm = shm;
+
+    if (uv_thread_create(&cors->thread, cors_thread, cors)) {
+        log_trace(1, "cors supervisor thread create error\n");
+        return 0;
+    }
+    cors->state = 1;
+    log_trace(1, "cors supervisor started\n");
+    return 1;
+}
+
 static void free_cors(cors_t *cors)
 {
     cors_freenav(&cors->nav);
@@ -91,18 +163,34 @@ static void free_cors(cors_t *cors)
 
 extern void cors_close(cors_t *cors)
 {
-    cors_ntrip_close(&cors->ntrip);
-    cors_rtcm_decoder_close(&cors->rtcm_decoder);
-    cors_pnt_close(&cors->pnt);
-    cors_monitor_close(&cors->monitor);
-    cors_srtk_close(&cors->srtk);
-    cors_nrtk_close(&cors->nrtk);
-    cors_vrs_close(&cors->vrs);
-    cors_ntrip_agent_close(&cors->agent);
+    if (cors->role == CORS_ROLE_WORKER) {
+        cors_ntrip_close(&cors->ntrip);
+        cors_rtcm_decoder_close(&cors->rtcm_decoder);
+        cors_pnt_close(&cors->pnt);
+        cors_srtk_close(&cors->srtk);
+    } else if (cors->role == CORS_ROLE_SUPERVISOR) {
+        cors_ntrip_agent_close(&cors->agent);
+        cors_corr_close();
+        cors_monitor_close(&cors->monitor);
+        cors_nrtk_close(&cors->nrtk);
+        cors_vrs_close(&cors->vrs);
+    } else {
+        cors_ntrip_close(&cors->ntrip);
+        cors_rtcm_decoder_close(&cors->rtcm_decoder);
+        cors_pnt_close(&cors->pnt);
+        cors_monitor_close(&cors->monitor);
+        cors_srtk_close(&cors->srtk);
+        cors_nrtk_close(&cors->nrtk);
+        cors_vrs_close(&cors->vrs);
+        cors_ntrip_agent_close(&cors->agent);
+        cors_corr_close();
+    }
 
     cors->state=0;
-    uv_async_send(cors->close);
-    uv_thread_join(&cors->thread);
+    if (cors->close) {
+        uv_async_send(cors->close);
+        uv_thread_join(&cors->thread);
+    }
     free_cors(cors);
 }
 
@@ -274,6 +362,7 @@ extern void cors_add_source(cors_t *cors, const char *name, const char *addr, in
                             const char *mntpnt, const double *pos)
 {
     cors_ntrip_source_info_t *info=calloc(1,sizeof(*info));
+    int ret;
     strcpy(info->passwd,passwd);
     strcpy(info->mntpnt,mntpnt);
     strcpy(info->name,name);
@@ -282,9 +371,10 @@ extern void cors_add_source(cors_t *cors, const char *name, const char *addr, in
     info->port=port;
     matcpy(info->pos,pos,1,3);
 
-    cors_ntrip_add_source(&cors->ntrip,info);
-    cors_nrtk_add_source(&cors->nrtk,info->ID,
-            info->pos);
+    ret=cors_ntrip_add_source(&cors->ntrip,info);
+    if (ret>0) {
+        cors_nrtk_add_source(&cors->nrtk,ret,pos);
+    }
 }
 
 extern void cors_del_source(cors_t *cors, const char *name)

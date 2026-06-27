@@ -17,6 +17,28 @@
 #define ENA_RAW_LOG   1
 #define ENA_ERCONN    1
 
+static int is_ntrip_stream_ok(const char *buf)
+{
+    if (strstr(buf,NTRIP_RSP_SOURCETABLE_OK)) return 0;
+    if (strstr(buf,"ICY 200 OK")) return 1;
+    if (strstr(buf,"200 OK")||strstr(buf,"200 Ok")) return 1;
+    return 0;
+}
+
+static const char *ntrip_payload(const char *buf, ssize_t nread)
+{
+    const char *p;
+
+    if ((p=strstr(buf,"ICY 200 OK\r\n"))) {
+        p+=strlen("ICY 200 OK\r\n");
+        if (p<buf+nread) return p;
+        return NULL;
+    }
+    p=strstr(buf,"\r\n\r\n");
+    if (!p||p+4>=buf+nread) return NULL;
+    return p+4;
+}
+
 static int reqntrip_cli(cors_ntrip_client_t *cli, char *req_msg)
 {
     char user[514],*p=req_msg;
@@ -110,8 +132,12 @@ static void on_read_cb(uv_stream_t *str, ssize_t nread, const uv_buf_t *buf)
     }
     log_data(cli,buf->base,nread);
 
-    if (strstr(buf->base,NTRIP_RSP_OK)) {
+    if (is_ntrip_stream_ok(buf->base)) {
+        const char *payload;
         cli->state=1;
+        if (cli->read_cb&&(payload=ntrip_payload(buf->base,nread))) {
+            cli->read_cb(cli,(char*)payload,(ssize_t)(buf->base+nread-payload));
+        }
     }
     else if (strstr(buf->base,NTRIP_RSP_SOURCETABLE_OK)) {
 

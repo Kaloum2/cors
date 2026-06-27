@@ -19,12 +19,19 @@ extern "C" {
 #include "queue.h"
 #include "triangle.h"
 #include "kdtree.h"
+#include "policy.h"
 
 typedef int (*ntrip_cli_read_cb)(void* userdata, const uint8_t *data, int n);
 
 #define MAX_RTCM_MSG  32
 #define CORS_MONITOR  1
 #define CORS_PNT      1
+
+typedef enum cors_role {
+    CORS_ROLE_SINGLE     = 0,
+    CORS_ROLE_SUPERVISOR = 1,
+    CORS_ROLE_WORKER     = 2
+} cors_role_t;
 
 typedef struct cors_ntrip_client {
     uv_connect_t *conn;
@@ -69,6 +76,8 @@ typedef struct cors_ntrip_conn {
     char buff[MAXBUFLEN];
     double pos[3];
     gtime_t time;
+    gtime_t policy_reg_time; /* last geofence policy check */
+    int policy_reg_done;     /* first GGA geofence check completed */
     struct cors_ntrip_agent *agent;
     UT_hash_handle hh;
 } cors_ntrip_conn_t;
@@ -82,6 +91,7 @@ typedef struct cors_ntrip_conn_q {
 typedef struct cors_ntrip_user {
     char user[64];
     char passwd[64];
+    cors_user_policy_t policy;
     UT_hash_handle hh;
 } cors_ntrip_user_t;
 
@@ -470,13 +480,28 @@ typedef struct cors_cli {
     UT_hash_handle hh;
 } cors_cli_t;
 
+typedef struct cors_ci cors_ci_t;
+
+typedef struct cors_ci_client {
+    uv_pipe_t *pipe;
+    int        worker_id;
+    cors_ci_t *owner;
+    UT_hash_handle hh;
+} cors_ci_client_t;
+
 typedef struct cors_ci {
     uv_pipe_t *svr;
     cors_cli_t *cli;
+    cors_ci_client_t *clients;
+    char pipe_path[256];
+    int  state;
 } cors_ci_t;
 
 typedef struct cors {
     int state;
+    cors_role_t role;
+    void *mproc_shm;       /* cors_shm_t* when multi-process (see mcors.h) */
+    int mproc_worker_id;
     uv_thread_t thread;
     uv_timer_t *timer_stat;
     uv_async_t *close;
@@ -498,9 +523,7 @@ typedef struct cors {
     cors_opt_t opt;
 } cors_t;
 
-typedef struct mcors {
-
-} mcors_t;
+/* mcors_t — see include/mcors.h */
 
 EXPORT int cors_ntripcli_start(uv_loop_t *loop, cors_ntrip_client_t *cli, ntrip_cli_read_cb read_cb, const char *name,
                                const char *addr, int port, const char *user, const char *passwd,
@@ -514,7 +537,7 @@ EXPORT int cors_ntrip_caster_del_source(cors_ntrip_caster_t *ctr, const char *na
 
 EXPORT int cors_ntrip_start(cors_ntrip_t *ntrip, cors_t *cors, const char *sources_file);
 EXPORT void cors_ntrip_close(cors_ntrip_t *ntrip);
-EXPORT void cors_ntrip_add_source(cors_ntrip_t *ntrip, cors_ntrip_source_info_t *info);
+EXPORT int cors_ntrip_add_source(cors_ntrip_t *ntrip, cors_ntrip_source_info_t *info);
 EXPORT void cors_ntrip_del_source(cors_ntrip_t *ntrip, const char *name);
 EXPORT void cors_ntrip_source_updpos(cors_ntrip_t *ntrip, const double *pos, int srcid);
 
@@ -596,6 +619,9 @@ EXPORT void cors_nrtk_del_vsta(cors_nrtk_t *nrtk, const char *name);
 EXPORT int cors_vrs_upd(cors_vrs_t *vrs, cors_vrs_sta_t *vsta, const cors_master_sta_t *msta, const obs_t *mobs, const rtk_t **rtk, int n);
 EXPORT int cors_vrs_start(cors_vrs_t *vrs, cors_t *cors, cors_nrtk_t *nrtk, const char *vstas_file);
 EXPORT void cors_vrs_close(cors_vrs_t *vrs);
+EXPORT int cors_vrs_pos_in_dtrig(const cors_vrs_t *vrs, const double *pos);
+EXPORT const cors_dtrig_t *cors_vrs_dtrig_at_pos(const cors_vrs_t *vrs, const double *pos);
+EXPORT int cors_vrs_encode_obs_rtcm(cors_vrs_sta_t *vsta, const nav_t *nav, char *buff, int max_len);
 
 EXPORT int cors_ntrip_agent_start(cors_ntrip_agent_t *agent, cors_ntrip_t *ntrip, const char *users_file);
 EXPORT void cors_ntrip_agent_close(cors_ntrip_agent_t *agent);

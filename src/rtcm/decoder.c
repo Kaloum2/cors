@@ -6,6 +6,7 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "mcors.h"
 
 #define REFINE_RTCM_DECODER    1
 
@@ -75,18 +76,28 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
 
     if (ret==1) {
         cors_updobs(&cors->obs,obs->data,obs->n,rtcm->srcid);
+        if (cors->role == CORS_ROLE_WORKER && cors->mproc_shm) {
+            cors_shm_publish_obs((cors_shm_t *)cors->mproc_shm, obs->data, obs->n, rtcm->srcid);
+        }
         cors_pnt_pos(pnt,obs->data,obs->n,rtcm->srcid);
     }
     else if (ret==2) {
         cors_updnav(&cors->nav,nav,rtcm->ephsat,rtcm->ephset);
+        if (cors->role == CORS_ROLE_WORKER && cors->mproc_shm) {
+            cors_shm_publish_nav((cors_shm_t *)cors->mproc_shm, nav, rtcm->ephsat, rtcm->ephset);
+        }
 #if CORS_MONITOR
-        cors_monitor_nav(&cors->monitor.moni_nav,nav,rtcm->ephsat,rtcm->ephset,rtcm->srcid);
+        if (cors->role != CORS_ROLE_WORKER) {
+            cors_monitor_nav(&cors->monitor.moni_nav,nav,rtcm->ephsat,rtcm->ephset,rtcm->srcid);
+        }
 #endif
     }
     else if (ret==5) {
         cors_updsta(stas,&rtcm->sta,rtcm->srcid);
         cors_ntrip_source_updpos(ntrip,rtcm->sta.pos,rtcm->srcid);
-        cors_dtrignet_upd_vertex(&cors->nrtk.dtrig_net,rtcm->sta.pos,rtcm->srcid);
+        if (cors->role != CORS_ROLE_WORKER && cors->nrtk.state) {
+            cors_dtrignet_upd_vertex(&cors->nrtk.dtrig_net,rtcm->sta.pos,rtcm->srcid);
+        }
     }
 }
 
