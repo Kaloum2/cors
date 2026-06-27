@@ -1,0 +1,17 @@
+# Mountpoint registry — see doc/recap/008-gestion-modes-corrections.md
+# Format: NAME,type=MODE[,source=PHYSICAL_SOURCE]
+#
+# Built-in defaults are registered even if this file is absent.
+# Uncomment or duplicate lines to override builtins.
+
+RTCM32,type=nearest,format=RTCM3
+NEAR,type=nearest,format=RTCM3
+VRS,type=vrs_dynamic,format=RTCM3_MSM7
+VRS32,type=vrs_dynamic,format=RTCM3_MSM7
+FKP,type=fkp,format=RTCM3_1034_1035
+MAC,type=mac,format=RTCM3_MAC
+IMAX,type=imax,format=RTCM3_IMAX
+AUTO,type=auto,priority=VRS,MAC,FKP,NEAREST
+
+# Relay example (physical source must exist in ntrip sources):
+# IPGP,type=relay,source=IPGP

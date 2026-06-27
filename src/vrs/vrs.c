@@ -454,20 +454,50 @@ static void out_vrs_obsrnx(cors_vrs_t *vrs, cors_vrs_sta_t *vsta)
     outrnxobsb(vsta->fp_rnx,&vsta->rnx_opt,vsta->obs.data,vsta->obs.n,0);
 }
 
-static void out_vrs_obsrtcm(cors_vrs_t *vrs, cors_vrs_sta_t *vsta)
+int cors_vrs_encode_obs_rtcm(cors_vrs_sta_t *vsta, const nav_t *nav, char *buff, int max_len)
 {
 #if VRS_HIGH_RESOLUTION
-    int nb,type[5]={1076,1086,1096,1126,1116};
+    int type[5]={1076,1086,1096,1126,1116};
 #else
-    int nb,type[5]={1074,1084,1094,1124,1114};
+    int type[5]={1074,1084,1094,1124,1114};
 #endif
+
+    if (!vsta||!nav||!buff||max_len<=0||vsta->obs.n<=0) return 0;
+    return rtcm_encode_obs(&vsta->rtcm,type,5,nav,vsta->obs.data,vsta->obs.n,buff);
+}
+
+static void out_vrs_obsrtcm(cors_vrs_t *vrs, cors_vrs_sta_t *vsta)
+{
     char buff[MAXOBS*256];
     cors_ntrip_agent_t *agent=&vrs->cors->agent;
     nav_t *nav=&vrs->cors->nav.data;
+    int nb;
 
-    if ((nb=rtcm_encode_obs(&vsta->rtcm,type,5,nav,vsta->obs.data,vsta->obs.n,buff))) {
+    if ((nb=cors_vrs_encode_obs_rtcm(vsta,nav,buff,sizeof(buff)))) {
         cors_ntrip_agent_send(agent,vsta->name,buff,nb,nav);
     }
+}
+
+int cors_vrs_pos_in_dtrig(const cors_vrs_t *vrs, const double *pos)
+{
+    cors_dtrig_t *d,*t;
+
+    if (!vrs||!pos||norm((double*)pos,3)<=0.0) return 0;
+    HASH_ITER(hh,vrs->nrtk->dtrig_net.dtrigs,d,t) {
+        if (is_in_dtrig(d,pos)) return 1;
+    }
+    return 0;
+}
+
+const cors_dtrig_t *cors_vrs_dtrig_at_pos(const cors_vrs_t *vrs, const double *pos)
+{
+    cors_dtrig_t *d,*t;
+
+    if (!vrs||!pos||norm((double*)pos,3)<=0.0) return NULL;
+    HASH_ITER(hh,vrs->nrtk->dtrig_net.dtrigs,d,t) {
+        if (is_in_dtrig(d,pos)) return d;
+    }
+    return NULL;
 }
 
 static void do_upd_vrs_work(upd_vrs_task_t *task)

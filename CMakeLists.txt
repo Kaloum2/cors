@@ -6,6 +6,7 @@ add_subdirectory(lib/lapack)
 
 include_directories(${PROJECT_BINARY_DIR})
 include_directories(include)
+include_directories(src/corr)
 include_directories(lib/libuv)
 include_directories(lib/uthash)
 include_directories(lib/queue)
@@ -23,6 +24,7 @@ aux_source_directory(src/nrtk SRC_NRTK)
 aux_source_directory(src/monitor SRC_MONITOR)
 aux_source_directory(src/dtrignet SRC_DELTRIG)
 aux_source_directory(src/vrs SRC_VRS)
+aux_source_directory(src/corr SRC_CORR)
 aux_source_directory(src/rinex SRC_RINEX)
 aux_source_directory(lib/triangulator SRC_TRIANGULATOR)
 aux_source_directory(lib/kdtree SRC_KDTREE)
@@ -36,7 +38,7 @@ endif()
 add_library(cors ${SRC_GPOS} ${SRC_RTCM} ${SRC_NTRIP} ${SRC_COMMON} ${SRC_CORS} ${SRC_PNT}
         ${SRC_MONITOR} ${SRC_NRTK}
         ${SRC_TRIANGULATOR} ${SRC_KDTREE}
-        ${SRC_DELTRIG} ${SRC_VRS} ${SRC_RINEX})
+        ${SRC_DELTRIG} ${SRC_VRS} ${SRC_CORR} ${SRC_RINEX})
 target_link_libraries(cors ${LIBS} lapack gfortran quadmath)
 
 add_executable(cors-engine src/engine/engine.c)
