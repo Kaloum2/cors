@@ -22,14 +22,20 @@ extern int monitor_rtcm_str(const cors_monitor_t *monitor, const char *name, cha
     char **msg=calloc(32,sizeof(*msg));
     for (i=0;i<32;i++) msg[i]=calloc(256,sizeof(char));
 
-    if (cors_monitor_rtcm_msg(&cors->monitor.moni_rtcm,s->ID,msg)<=0) {
-        return 0;
+    if (cors_monitor_rtcm_msg(&cors->monitor.moni_rtcm,s->ID,msg)>0) {
+        for (i=0;i<32;i++) {
+            if (strcmp(msg[i],"")==0) continue;
+            strcat(buff,msg[i]);
+            if (i<31) {
+                strcat(buff,",");
+            }
+        }
     }
-    for (i=0;i<32;i++) {
-        if (strcmp(msg[i],"")==0) continue;
-        strcat(buff,msg[i]);
-        if (i<31) {
-            strcat(buff,",");
+    {
+        char fkpbuf[512];
+        if (cors_monitor_rtcm_fkp_str(&cors->monitor.moni_rtcm,s->ID,fkpbuf,sizeof(fkpbuf))>0) {
+            if (buff[0]) strcat(buff,",");
+            strcat(buff,fkpbuf);
         }
     }
     for (i=0;i<32;i++) free(msg[i]); free(msg);

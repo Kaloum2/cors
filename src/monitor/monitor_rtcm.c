@@ -47,16 +47,67 @@ static void upd_rtcm_sta(cors_monitor_rtcm_stas_t *stas, const rtcm_t* rtcm, int
     data->sta=rtcm->sta;
 }
 
+static cors_monitor_rtcm_fkp_t* new_monitor_rtcm_fkp(cors_monitor_rtcm_fkp_t **tbl, int srcid)
+{
+    cors_monitor_rtcm_fkp_t *s=calloc(1,sizeof(cors_monitor_rtcm_fkp_t));
+    s->srcid=srcid;
+    HASH_ADD_INT(*tbl,srcid,s);
+    return s;
+}
+
+static void fkp_build_summary(cors_monitor_rtcm_fkp_t *data)
+{
+    char *p=data->summary;
+    int rem=(int)sizeof(data->summary), n, i, max_show;
+    const char *sys;
+
+    sys=data->fkpsys==SYS_GLO?"GLO":"GPS";
+    n=snprintf(p,rem,"FKP %s nsat=%d",sys,data->nfkp);
+    if (n<=0||n>=rem) return;
+    p+=n; rem-=n;
+
+    max_show=data->nfkp>3?3:data->nfkp;
+    for (i=0;i<max_show&&rem>32;i++) {
+        n=snprintf(p,rem," prn=%d gn0=%.2f ge0=%.2f gn1=%.2f ge1=%.2f",
+                   data->fkp[i].prn,data->fkp[i].gn0,data->fkp[i].ge0,
+                   data->fkp[i].gn1,data->fkp[i].ge1);
+        if (n<=0||n>=rem) break;
+        p+=n; rem-=n;
+    }
+    if (data->nfkp>max_show&&rem>8) {
+        snprintf(p,rem," +%d",data->nfkp-max_show);
+    }
+}
+
+static void upd_rtcm_fkp(cors_monitor_rtcm_fkps_t *fkps, const rtcm_t* rtcm, int srcid)
+{
+    cors_monitor_rtcm_fkp_t *data;
+
+    if (rtcm->moni_msg!=1034&&rtcm->moni_msg!=1035) return;
+    if (rtcm->nfkp<=0) return;
+
+    HASH_FIND_INT(fkps->fkp,&srcid,data);
+    if (!data&&!(data=new_monitor_rtcm_fkp(&fkps->fkp,srcid))) {
+        return;
+    }
+    data->fkpsys=rtcm->fkpsys;
+    data->nfkp=rtcm->nfkp;
+    memcpy(data->fkp,rtcm->fkp,sizeof(rtcm_fkp_sat_t)*rtcm->nfkp);
+    fkp_build_summary(data);
+}
+
 extern void cors_monitor_rtcm(cors_monitor_rtcm_t *moni_rtcm, const rtcm_t* rtcm, int srcid)
 {
     upd_rtcm_msg(&moni_rtcm->msgs,rtcm,srcid);
     upd_rtcm_sta(&moni_rtcm->stas,rtcm,srcid);
+    upd_rtcm_fkp(&moni_rtcm->fkps,rtcm,srcid);
 }
 
 extern void cors_monitor_initrtcm(cors_monitor_rtcm_t *moni_rtcm)
 {
     moni_rtcm->stas.sta=NULL;
     moni_rtcm->msgs.msg=NULL;
+    moni_rtcm->fkps.fkp=NULL;
 }
 
 extern void cors_monitor_freertcm(cors_monitor_rtcm_t *moni_rtcm)
@@ -72,6 +123,12 @@ extern void cors_monitor_freertcm(cors_monitor_rtcm_t *moni_rtcm)
     HASH_ITER(hh,moni_rtcm->stas.sta,s,tmp_sta) {
         HASH_DEL(moni_rtcm->stas.sta,s);
         free(s);
+    }
+
+    cors_monitor_rtcm_fkp_t *f,*tmp_fkp;
+    HASH_ITER(hh,moni_rtcm->fkps.fkp,f,tmp_fkp) {
+        HASH_DEL(moni_rtcm->fkps.fkp,f);
+        free(f);
     }
 }
 
@@ -99,6 +156,16 @@ extern int cors_monitor_rtcm_sta(cors_monitor_rtcm_t *moni_rtcm, int srcid, sta_
     *sta=d->sta; return 1;
 }
 
+extern int cors_monitor_rtcm_fkp_str(cors_monitor_rtcm_t *moni_rtcm, int srcid,
+                                     char *buf, int buflen)
+{
+    cors_monitor_rtcm_fkp_t *d;
 
-
-
+    if (!buf||buflen<=0) return 0;
+    buf[0]='\0';
+    HASH_FIND_INT(moni_rtcm->fkps.fkp,&srcid,d);
+    if (!d||!d->summary[0]) return 0;
+    strncpy(buf,d->summary,buflen-1);
+    buf[buflen-1]='\0';
+    return (int)strlen(buf);
+}

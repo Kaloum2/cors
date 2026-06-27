@@ -252,9 +252,23 @@ typedef struct cors_monitor_rtcm_stas {
     cors_monitor_rtcm_sta_t *sta;
 } cors_monitor_rtcm_stas_t;
 
+typedef struct cors_monitor_rtcm_fkp {
+    int srcid;
+    int fkpsys;
+    int nfkp;
+    rtcm_fkp_sat_t fkp[RTCM_MAXFKP];
+    char summary[512];
+    UT_hash_handle hh;
+} cors_monitor_rtcm_fkp_t;
+
+typedef struct cors_monitor_rtcm_fkps {
+    cors_monitor_rtcm_fkp_t *fkp;
+} cors_monitor_rtcm_fkps_t;
+
 typedef struct cors_monitor_rtcm {
     cors_monitor_rtcm_msgs_t msgs;
     cors_monitor_rtcm_stas_t stas;
+    cors_monitor_rtcm_fkps_t fkps;
 } cors_monitor_rtcm_t;
 
 typedef struct cors_navd {
@@ -588,6 +602,8 @@ EXPORT void cors_monitor_freertcm(cors_monitor_rtcm_t *moni_rtcm);
 EXPORT void cors_monitor_initrtcm(cors_monitor_rtcm_t *moni_rtcm);
 EXPORT int cors_monitor_rtcm_msg(cors_monitor_rtcm_t *moni_rtcm, int srcid, char **msg_data);
 EXPORT int cors_monitor_rtcm_sta(cors_monitor_rtcm_t *moni_rtcm, int srcid, sta_t *sta);
+EXPORT int cors_monitor_rtcm_fkp_str(cors_monitor_rtcm_t *moni_rtcm, int srcid,
+                                     char *buf, int buflen);
 
 EXPORT void cors_monitor_nav(cors_monitor_nav_t *moni_nav, const nav_t *nav, int ephsat, int ephset, int srcid);
 EXPORT void cors_monitor_initnav(cors_monitor_nav_t *moni_nav);
