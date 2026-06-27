@@ -27,6 +27,9 @@ typedef int (*ntrip_cli_read_cb)(void* userdata, const uint8_t *data, int n);
 #define CORS_MONITOR  1
 #define CORS_PNT      1
 
+#define CORS_NTRIP_AGENT_HOST  "127.0.0.1"
+#define CORS_NTRIP_AGENT_PORT  8002
+
 typedef enum cors_role {
     CORS_ROLE_SINGLE     = 0,
     CORS_ROLE_SUPERVISOR = 1,
@@ -78,6 +81,7 @@ typedef struct cors_ntrip_conn {
     gtime_t time;
     gtime_t policy_reg_time; /* last geofence policy check */
     int policy_reg_done;     /* first GGA geofence check completed */
+    uint64_t sv_session_id;  /* correction supervision session id */
     struct cors_ntrip_agent *agent;
     UT_hash_handle hh;
 } cors_ntrip_conn_t;

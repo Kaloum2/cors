@@ -6,9 +6,11 @@
  * history : 2022/11/17 1.0  new
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
+#include "supervision.h"
 
 #define MONITOR_CMD_SOURCE     "MONITOR-SOURCE"
 #define MONITOR_CMD_BSTA_DISTR "MONITOR-BSTADISTR"
+#define MONITOR_CMD_CORR       "MONITOR-CORR"
 
 extern void monitor_src_updconn(uv_stream_t *str, char *buff);
 extern void monitor_src_init(uv_loop_t *loop, cors_monitor_t *monitor, cors_monitor_src_qs_t *qs);
@@ -42,6 +44,62 @@ static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
     buf->len=suggested_size;
 }
 
+static void on_rsp_cb(uv_write_t* req, int status)
+{
+    char *p=req->data;
+    free(req);
+    if (p) free(p);
+}
+
+static void monitor_corr_reply(uv_stream_t *str, const char *out, int len)
+{
+    cors_monitord_t *md=str->data;
+    uv_write_t *wreq;
+    uv_buf_t buf;
+    char *copy;
+    int ret;
+
+    if (!out||len<=0||uv_is_closing((uv_handle_t*)md->conn)||
+        !uv_is_writable((uv_stream_t*)md->conn)) {
+        return;
+    }
+    copy=malloc(len);
+    if (!copy) return;
+    memcpy(copy,out,len);
+    wreq=malloc(sizeof(uv_write_t));
+    if (!wreq) { free(copy); return; }
+    buf.base=copy;
+    buf.len=len;
+    wreq->data=copy;
+    if ((ret=uv_write(wreq,(uv_stream_t*)md->conn,&buf,1,on_rsp_cb))!=0) {
+        log_trace(1,"monitor corr reply failed: %s\n",uv_strerror(ret));
+        free(wreq);
+        free(copy);
+    }
+}
+
+static void monitor_corr_cmd(uv_stream_t *str, char *buf)
+{
+    char out[8192];
+    char *p,*cmd;
+    int nb;
+
+    p=strrstr(buf,MONITOR_CMD_CORR);
+    if (!p) return;
+    p+=strlen(MONITOR_CMD_CORR);
+    while (*p==' '||*p=='\t') p++;
+    cmd=p;
+    while (*cmd&&*cmd!='\r'&&*cmd!='\n') cmd++;
+    *cmd='\0';
+    cmd=p;
+    if (!*cmd) {
+        monitor_corr_reply(str,"usage: MONITOR-CORR showsessions|showmode_stats\n",47);
+        return;
+    }
+    nb=cors_corr_monitor_cmd(cmd,out,(int)sizeof(out));
+    if (nb>0) monitor_corr_reply(str,out,nb);
+}
+
 static void on_read_cb(uv_stream_t *str, ssize_t nr, const uv_buf_t *buf)
 {
     cors_monitord_t *md=str->data;
@@ -59,6 +117,9 @@ static void on_read_cb(uv_stream_t *str, ssize_t nr, const uv_buf_t *buf)
     }
     else if ((p=strrstr(buf->base,MONITOR_CMD_BSTA_DISTR))) {
         monitor_bsta_distr(str,p);
+    }
+    else if ((p=strrstr(buf->base,MONITOR_CMD_CORR))) {
+        monitor_corr_cmd(str,buf->base);
     }
     free(buf->base);
 }

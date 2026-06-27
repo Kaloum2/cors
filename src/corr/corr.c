@@ -257,8 +257,13 @@ extern int cors_corr_sourcetable_build(const cors_corr_ctx_t *ctx,
 
     if (!ctx||!buf||max_len<=0) return 0;
 
-    st_append(buf,max_len,&n,
-              "CAS;127.0.0.1;8002;CORS;CORS;0;FRA;0.00;0.00;1;0;cors-engine;none;B;N;0;0\n");
+    {
+        char cas_line[256];
+        snprintf(cas_line,sizeof(cas_line),
+                 "CAS;%s;%d;CORS;CORS;0;FRA;0.00;0.00;1;0;cors-engine;none;B;N;0;0\n",
+                 CORS_NTRIP_AGENT_HOST,CORS_NTRIP_AGENT_PORT);
+        st_append(buf,max_len,&n,cas_line);
+    }
     st_append(buf,max_len,&n,"NET;CORS;CORS;FRA;2;GPS+GLO+GAL;cors-engine;;;0;0\n");
 
     if (ctx->registry) {
@@ -357,6 +362,11 @@ extern int cors_corr_conn_begin(cors_ntrip_conn_t *conn, const cors_mountpoint_d
         return 0;
     }
     HASH_ADD_PTR(g_conn_sess,conn,c);
+    {
+        char key[32];
+        snprintf(key,sizeof(key),"%p",(void*)conn->conn);
+        cors_corr_supervision_log(key,conn->mntpnt,cors_corr_mode_str(mntdef->mode),"attached");
+    }
     return 1;
 }
 

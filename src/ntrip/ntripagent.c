@@ -8,12 +8,12 @@
 #include "cors.h"
 #include "corr.h"
 #include "policy.h"
+#include "supervision.h"
 
 #define NTRIP_AGENT_MNTPNT  "RTCM32"
 #define NTRIP_RSP_UNAUTH    "HTTP/1.0 401 Unauthorized\r\n"
 #define NTRIP_RSP_OK_CLI    "ICY 200 OK\r\n"
 #define NTRIP_RSP_SOURCETABLE_OK "SOURCETABLE 200 OK\r\n"
-#define NTRIP_AGENT_PORT     8002
 #define NTRIP_SOURCETABLE_MAX (128*1024)
 
 typedef struct agent_del_ntripconn {
@@ -224,6 +224,57 @@ static policy_result_t check_user_policy(cors_ntrip_agent_t *agent,
     return POLICY_OK;
 }
 
+static const char *policy_reason_str(policy_result_t reason)
+{
+    switch (reason) {
+        case POLICY_DENY_MODE:    return "mode_not_allowed";
+        case POLICY_DENY_REGION:  return "outside_region";
+        case POLICY_DENY_SESSION: return "session_quota";
+        default:                  return "denied";
+    }
+}
+
+static cors_corr_mode_t conn_requested_mode(cors_ntrip_conn_t *conn)
+{
+    cors_mountpoint_def_t scratch;
+    const cors_mountpoint_def_t *mnt;
+
+    if (conn->type==CORS_CORR_LEGACY_TYPE_NEAR) return CORS_CORR_NEAR;
+    if (conn->type==NTRIP_CONN_CORR) {
+        mnt=cors_corr_resolve_mountpoint(cors_corr_ctx_get(),conn->mntpnt,0,&scratch);
+        if (mnt) return mnt->mode;
+    }
+    return CORS_CORR_RELAY;
+}
+
+static void sv_conn_key(cors_ntrip_conn_t *conn, char *key, int n)
+{
+    snprintf(key,n,"%p",(void*)conn->conn);
+}
+
+static void sv_session_begin(cors_ntrip_conn_t *conn)
+{
+    char key[32];
+
+    if (!conn||!conn->user[0]) return;
+    sv_conn_key(conn,key,sizeof(key));
+    cors_corr_session_register(conn->user,conn->mntpnt,conn_requested_mode(conn),
+                             key,&conn->sv_session_id);
+}
+
+static void sv_session_end(cors_ntrip_conn_t *conn)
+{
+    if (!conn||!conn->sv_session_id) return;
+    cors_corr_session_deregister(conn->sv_session_id);
+    conn->sv_session_id=0;
+}
+
+static void sv_log_gga(cors_ntrip_conn_t *conn)
+{
+    if (!conn||!conn->sv_session_id||norm(conn->pos,3)<=0.0) return;
+    cors_corr_log_event(conn->sv_session_id,CORR_EVT_GGA_UPDATE,-1,conn->pos,"-");
+}
+
 static void deny_policy(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
                       policy_result_t reason)
 {
@@ -237,7 +288,10 @@ static void deny_policy(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
     }
     log_trace(1,"policy denied: user=%s mntpnt=%s reason=%d\n",
               conn->user[0]?conn->user:"?",conn->mntpnt,reason);
+    cors_corr_log_event(conn->sv_session_id,CORR_EVT_POLICY_DENIED,
+                        conn_requested_mode(conn),NULL,policy_reason_str(reason));
     send_rsqc(agent,conn,rsp);
+    sv_session_end(conn);
     ntripagnet_del_conn(agent,conn);
 }
 
@@ -328,6 +382,7 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
 
     if (conn->state) {
         test_gga_msg(agent,conn,buff);
+        if (norm(conn->pos,3)>0.0) sv_log_gga(conn);
         if (conn->user[0]&&policy_should_check_region(conn)) {
             HASH_FIND_STR(agent->user_tbl,conn->user,u);
             if (u) {
@@ -401,6 +456,7 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
     if (norm(conn->pos,3)>0.0) policy_mark_region_checked(conn);
 
     conn->state=1;
+    sv_session_begin(conn);
     send_rsqc(agent,conn,NTRIP_RSP_OK_CLI);
     if (conn->type==NTRIP_CONN_CORR) {
         cors_mountpoint_def_t scratch;
@@ -468,6 +524,8 @@ static void do_del_ntripconn(agent_del_ntripconn_t *data)
     if (!c) return;
 
     if (c->type==NTRIP_CONN_CORR) cors_corr_conn_end(c);
+
+    sv_session_end(c);
 
     uv_mutex_lock(&agent->cq_lock);
     HASH_FIND_STR(agent->cq_tbl,data->conn->mntpnt,cq);
@@ -620,7 +678,7 @@ static void ntrip_agent_thread(void *ntrip_agent_arg)
     uv_tcp_init(loop,agent->svr);
     struct sockaddr_in addr;
 
-    uv_ip4_addr("127.0.0.1",NTRIP_AGENT_PORT,&addr);
+    uv_ip4_addr(CORS_NTRIP_AGENT_HOST,CORS_NTRIP_AGENT_PORT,&addr);
     uv_tcp_bind(agent->svr,(const struct sockaddr*)&addr,0);
 
     int ret=uv_listen((uv_stream_t*)agent->svr,SOMAXCONN,on_new_ntripconn);
