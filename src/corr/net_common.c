@@ -15,7 +15,8 @@ static cors_corr_cfg_t g_corr_cfg={
     3,       /* auto_mac_min_fixed_bls */
     3,       /* auto_fkp_min_stations */
     1,       /* source_rinex_enable */
-    "build/source_rinex"
+    "build/source_rinex",
+    0.0      /* source_rinex_flush_sec: 0 = midnight/shutdown only */
 };
 
 const cors_corr_cfg_t *corr_cfg_get(void)
@@ -60,6 +61,12 @@ extern int corr_cfg_load(const char *file)
             strncpy(g_corr_cfg.source_rinex_dir,val,sizeof(g_corr_cfg.source_rinex_dir)-1);
             g_corr_cfg.source_rinex_dir[sizeof(g_corr_cfg.source_rinex_dir)-1]='\0';
         }
+        else if (!strcmp(key,"source-rinex-flush-sec")) {
+            g_corr_cfg.source_rinex_flush_sec=atof(val);
+        }
+        else if (!strcmp(key,"source-rinex-flush-h")) {
+            g_corr_cfg.source_rinex_flush_sec=atof(val)*3600.0;
+        }
         else if (!strcmp(key,"session-rinex-enable")) {
             g_corr_cfg.source_rinex_enable=atoi(val);
         }
@@ -69,13 +76,20 @@ extern int corr_cfg_load(const char *file)
         }
     }
     fclose(fp);
-    log_trace(1,"corr cfg: vrs_move=%.0fm vrs_bl=%d mac_bl=%d fkp_sta=%d src_rinex=%d dir=%s\n",
+    if (g_corr_cfg.source_rinex_flush_sec>CORS_RINEX_FLUSH_SEC_MAX) {
+        g_corr_cfg.source_rinex_flush_sec=CORS_RINEX_FLUSH_SEC_MAX;
+    }
+    if (g_corr_cfg.source_rinex_flush_sec<0.0) {
+        g_corr_cfg.source_rinex_flush_sec=0.0;
+    }
+    log_trace(1,"corr cfg: vrs_move=%.0fm vrs_bl=%d mac_bl=%d fkp_sta=%d src_rinex=%d dir=%s flush=%.0fs\n",
               g_corr_cfg.vrs_dynamic_move_thresh_m,
               g_corr_cfg.auto_vrs_min_fixed_bls,
               g_corr_cfg.auto_mac_min_fixed_bls,
               g_corr_cfg.auto_fkp_min_stations,
               g_corr_cfg.source_rinex_enable,
-              g_corr_cfg.source_rinex_dir);
+              g_corr_cfg.source_rinex_dir,
+              g_corr_cfg.source_rinex_flush_sec);
     return 1;
 }
 

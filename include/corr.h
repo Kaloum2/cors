@@ -109,7 +109,10 @@ typedef struct cors_corr_cfg {
     int    auto_fkp_min_stations;
     int    source_rinex_enable;
     char   source_rinex_dir[MAXSTRPATH];
+    double source_rinex_flush_sec; /* periodic NAV flush; 0=midnight/shutdown only; max 86400 */
 } cors_corr_cfg_t;
+
+#define CORS_RINEX_FLUSH_SEC_MAX  86400.0
 
 /* Profil utilisateur étendu (évolution future de conf/agentuser) */
 typedef struct cors_corr_user_policy {

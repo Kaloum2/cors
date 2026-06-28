@@ -8,6 +8,7 @@
 #include "cors.h"
 #include "mcors.h"
 #include "source_rinex.h"
+#include "nav_rinex.h"
 
 #define REFINE_RTCM_DECODER    1
 
@@ -89,6 +90,7 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
         if (info&&cors->role!=CORS_ROLE_SUPERVISOR) {
             cors_source_rinex_obs(rtcm->srcid,info->name,obs->data,obs->n,
                                   &cors->nav.data,info->pos);
+            cors_nav_rinex_check_day();
         }
     }
     else if (ret==2) {
@@ -98,6 +100,7 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
         }
         if (cors->role!=CORS_ROLE_SUPERVISOR) {
             cors_source_rinex_nav(rtcm->srcid,nav,rtcm->ephsat,rtcm->ephset);
+            cors_nav_rinex_feed(nav,rtcm->ephsat,rtcm->ephset);
         }
 #if CORS_MONITOR
         if (cors->role != CORS_ROLE_WORKER) {
