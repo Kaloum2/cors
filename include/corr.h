@@ -185,11 +185,20 @@ EXPORT cors_corr_mode_t cors_corr_mode_parse(const char *str);
 /* Politique utilisateur                                                      */
 /* -------------------------------------------------------------------------- */
 
+/* active_sessions : sessions actives pour quota ; < 0 = ne pas vérifier le quota */
 EXPORT cors_corr_policy_result_t
             cors_corr_policy_check(const cors_corr_ctx_t *ctx,
                                    const char *user,
                                    cors_corr_mode_t mode,
-                                   const double pos[3]);
+                                   const double pos[3],
+                                   int active_sessions);
+
+EXPORT const char *cors_corr_policy_result_str(cors_corr_policy_result_t result);
+
+/* Mode effectif pour policy (résolution mountpoint + legacy conn type) */
+EXPORT cors_corr_mode_t cors_corr_mode_for_mountpoint(const cors_corr_ctx_t *ctx,
+                                                      const char *mntpnt,
+                                                      int legacy_conn_type);
 
 /* -------------------------------------------------------------------------- */
 /* Cycle de vie session                                                       */

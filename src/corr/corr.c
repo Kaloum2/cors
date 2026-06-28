@@ -113,15 +113,6 @@ cors_corr_resolve_mountpoint(const cors_corr_ctx_t *ctx, const char *mntpnt,
     return NULL;
 }
 
-extern cors_corr_policy_result_t cors_corr_policy_check(const cors_corr_ctx_t *ctx,
-                                                        const char *user,
-                                                        cors_corr_mode_t mode,
-                                                        const double pos[3])
-{
-    (void)ctx; (void)user; (void)mode; (void)pos;
-    return CORS_CORR_POLICY_OK;
-}
-
 extern int cors_corr_session_attach(cors_corr_session_t *sess,
                                     const cors_corr_ctx_t *ctx,
                                     cors_ntrip_conn_t *conn,
@@ -203,10 +194,72 @@ static int user_allows_mode(const cors_ntrip_user_t *user, cors_corr_mode_t mode
         case CORS_CORR_AUTO:
             pm=CORR_MODE_AUTO;
             break;
+        case CORS_CORR_IMAX:
+            pm=CORR_MODE_IMAX;
+            break;
         default:
             return 0;
     }
     return (user->policy.allowed_modes&pm)!=0;
+}
+
+extern cors_corr_mode_t cors_corr_mode_for_mountpoint(const cors_corr_ctx_t *ctx,
+                                                      const char *mntpnt,
+                                                      int legacy_conn_type)
+{
+    cors_mountpoint_def_t scratch;
+    const cors_mountpoint_def_t *mnt;
+    cors_vrs_sta_t *vsta;
+
+    if (legacy_conn_type==CORS_CORR_LEGACY_TYPE_NEAR) return CORS_CORR_NEAR;
+    if (!ctx||!mntpnt||!*mntpnt) return CORS_CORR_RELAY;
+    mnt=cors_corr_resolve_mountpoint(ctx,mntpnt,0,&scratch);
+    if (mnt) return mnt->mode;
+    if (ctx->cors&&ctx->cors->vrs.stas.data) {
+        HASH_FIND_STR(ctx->cors->vrs.stas.data,mntpnt,vsta);
+        if (vsta) return CORS_CORR_VRS_FIXED;
+    }
+    return CORS_CORR_RELAY;
+}
+
+extern const char *cors_corr_policy_result_str(cors_corr_policy_result_t result)
+{
+    switch (result) {
+        case CORS_CORR_POLICY_OK:      return "ok";
+        case CORS_CORR_POLICY_UNAUTH:  return "unauthorized";
+        case CORS_CORR_POLICY_FORBID:  return "mode_not_allowed";
+        case CORS_CORR_POLICY_REGION:  return "outside_region";
+        case CORS_CORR_POLICY_QUOTA:   return "session_quota";
+        case CORS_CORR_POLICY_UNKNOWN: return "unknown_mountpoint";
+        default:                       return "denied";
+    }
+}
+
+extern cors_corr_policy_result_t cors_corr_policy_check(const cors_corr_ctx_t *ctx,
+                                                        const char *user,
+                                                        cors_corr_mode_t mode,
+                                                        const double pos[3],
+                                                        int active_sessions)
+{
+    cors_ntrip_user_t *u=NULL;
+
+    if (!ctx||!user||!*user) return CORS_CORR_POLICY_UNAUTH;
+    if (mode<0||mode>=CORS_CORR_MODE_MAX) return CORS_CORR_POLICY_UNKNOWN;
+    if (mode!=CORS_CORR_VRS_FIXED&&!cors_corr_service_for_mode(mode)) {
+        return CORS_CORR_POLICY_UNKNOWN;
+    }
+    if (!ctx->agent) return CORS_CORR_POLICY_UNAUTH;
+    HASH_FIND_STR(ctx->agent->user_tbl,user,u);
+    if (!u) return CORS_CORR_POLICY_UNAUTH;
+    if (!user_allows_mode(u,mode)) return CORS_CORR_POLICY_FORBID;
+    if (pos&&norm((double*)pos,3)>0.0&&
+        !cors_user_region_contains(&u->policy.region,pos)) {
+        return CORS_CORR_POLICY_REGION;
+    }
+    if (active_sessions>=0&&!cors_policy_check_sessions(u,active_sessions)) {
+        return CORS_CORR_POLICY_QUOTA;
+    }
+    return CORS_CORR_POLICY_OK;
 }
 
 static int append_mount_str(const cors_corr_ctx_t *ctx, const cors_mountpoint_def_t *mnt,
@@ -352,9 +405,18 @@ extern const cors_corr_ctx_t *cors_corr_ctx_get(void)
 extern int cors_corr_conn_begin(cors_ntrip_conn_t *conn, const cors_mountpoint_def_t *mntdef)
 {
     cors_corr_conn_t *c;
+    cors_corr_policy_result_t pr;
 
     if (!conn||!mntdef) return 0;
     if (corr_conn_find(conn)) return 1;
+    if (conn->user[0]) {
+        pr=cors_corr_policy_check(&g_corr_ctx,conn->user,mntdef->mode,conn->pos,-1);
+        if (pr!=CORS_CORR_POLICY_OK) {
+            log_trace(1,"corr: policy denied at attach user=%s mntpnt=%s reason=%s\n",
+                      conn->user,conn->mntpnt,cors_corr_policy_result_str(pr));
+            return 0;
+        }
+    }
     c=calloc(1,sizeof(*c));
     c->conn=conn;
     if (!cors_corr_session_attach(&c->sess,&g_corr_ctx,conn,mntdef)) {

@@ -176,23 +176,6 @@ static int count_user_sessions(cors_ntrip_agent_t *agent, const char *user)
     return n;
 }
 
-typedef enum {
-    POLICY_OK=0,
-    POLICY_DENY_MODE,
-    POLICY_DENY_REGION,
-    POLICY_DENY_SESSION
-} policy_result_t;
-
-static policy_result_t check_user_region(cors_ntrip_user_t *user, const double *pos)
-{
-    if (!user) return POLICY_DENY_REGION;
-    if (pos&&norm((double*)pos,3)>0.0&&
-        !cors_user_region_contains(&user->policy.region,pos)) {
-        return POLICY_DENY_REGION;
-    }
-    return POLICY_OK;
-}
-
 static int policy_should_check_region(cors_ntrip_conn_t *conn)
 {
     if (norm(conn->pos,3)<=0.0) return 0;
@@ -206,45 +189,27 @@ static void policy_mark_region_checked(cors_ntrip_conn_t *conn)
     conn->policy_reg_time=timeget();
 }
 
-static policy_result_t check_user_policy(cors_ntrip_agent_t *agent,
-                                         cors_ntrip_user_t *user,
-                                         const char *mntpnt, const double *pos)
+static cors_corr_policy_result_t check_user_policy(cors_ntrip_agent_t *agent,
+                                                   cors_ntrip_user_t *user,
+                                                   const char *mntpnt,
+                                                   int legacy_conn_type,
+                                                   const double *pos,
+                                                   int check_quota)
 {
-    cors_policy_mode_t mode;
-    policy_result_t r;
+    const cors_corr_ctx_t *ctx=cors_corr_ctx_get();
+    cors_corr_mode_t mode;
     int nsess;
 
-    if (!user) return POLICY_DENY_MODE;
-    mode=cors_corr_mode_from_mountpoint(mntpnt);
-    if (!mode||!(user->policy.allowed_modes&mode)) return POLICY_DENY_MODE;
-    r=check_user_region(user,pos);
-    if (r!=POLICY_OK) return r;
-    nsess=count_user_sessions(agent,user->user);
-    if (!cors_policy_check_sessions(user,nsess)) return POLICY_DENY_SESSION;
-    return POLICY_OK;
-}
-
-static const char *policy_reason_str(policy_result_t reason)
-{
-    switch (reason) {
-        case POLICY_DENY_MODE:    return "mode_not_allowed";
-        case POLICY_DENY_REGION:  return "outside_region";
-        case POLICY_DENY_SESSION: return "session_quota";
-        default:                  return "denied";
-    }
+    if (!user) return CORS_CORR_POLICY_UNAUTH;
+    if (!ctx) return CORS_CORR_POLICY_UNAUTH;
+    mode=cors_corr_mode_for_mountpoint(ctx,mntpnt,legacy_conn_type);
+    nsess=check_quota?count_user_sessions(agent,user->user):-1;
+    return cors_corr_policy_check(ctx,user->user,mode,pos,nsess);
 }
 
 static cors_corr_mode_t conn_requested_mode(cors_ntrip_conn_t *conn)
 {
-    cors_mountpoint_def_t scratch;
-    const cors_mountpoint_def_t *mnt;
-
-    if (conn->type==CORS_CORR_LEGACY_TYPE_NEAR) return CORS_CORR_NEAR;
-    if (conn->type==NTRIP_CONN_CORR) {
-        mnt=cors_corr_resolve_mountpoint(cors_corr_ctx_get(),conn->mntpnt,0,&scratch);
-        if (mnt) return mnt->mode;
-    }
-    return CORS_CORR_RELAY;
+    return cors_corr_mode_for_mountpoint(cors_corr_ctx_get(),conn->mntpnt,conn->type);
 }
 
 static void sv_conn_key(cors_ntrip_conn_t *conn, char *key, int n)
@@ -276,20 +241,22 @@ static void sv_log_gga(cors_ntrip_conn_t *conn)
 }
 
 static void deny_policy(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
-                      policy_result_t reason)
+                      cors_corr_policy_result_t reason)
 {
     const char *rsp=CORS_NTRIP_RSP_FORBIDDEN;
 
     switch (reason) {
-        case POLICY_DENY_MODE:   rsp=CORS_NTRIP_RSP_FORBIDDEN_MODE; break;
-        case POLICY_DENY_REGION: rsp=CORS_NTRIP_RSP_FORBIDDEN_REGION; break;
-        case POLICY_DENY_SESSION:rsp=CORS_NTRIP_RSP_FORBIDDEN_SESSION; break;
+        case CORS_CORR_POLICY_FORBID:  rsp=CORS_NTRIP_RSP_FORBIDDEN_MODE; break;
+        case CORS_CORR_POLICY_REGION:  rsp=CORS_NTRIP_RSP_FORBIDDEN_REGION; break;
+        case CORS_CORR_POLICY_QUOTA:   rsp=CORS_NTRIP_RSP_FORBIDDEN_SESSION; break;
         default: break;
     }
-    log_trace(1,"policy denied: user=%s mntpnt=%s reason=%d\n",
-              conn->user[0]?conn->user:"?",conn->mntpnt,reason);
+    log_trace(1,"policy denied: user=%s mntpnt=%s reason=%s\n",
+              conn->user[0]?conn->user:"?",conn->mntpnt,
+              cors_corr_policy_result_str(reason));
     cors_corr_log_event(conn->sv_session_id,CORR_EVT_POLICY_DENIED,
-                        conn_requested_mode(conn),NULL,policy_reason_str(reason));
+                        conn_requested_mode(conn),NULL,
+                        cors_corr_policy_result_str(reason));
     send_rsqc(agent,conn,rsp);
     sv_session_end(conn);
     ntripagnet_del_conn(agent,conn);
@@ -378,7 +345,7 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
     char url[256]="",mntpnt[256]="",proto[256]="",*p,*q;
     char user[513]={0},user_pwd[256]={0},new_mntpnt[32]={0};
     cors_ntrip_user_t *u=NULL;
-    policy_result_t pres;
+    cors_corr_policy_result_t pres;
 
     if (conn->state) {
         test_gga_msg(agent,conn,buff);
@@ -386,8 +353,8 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
         if (conn->user[0]&&policy_should_check_region(conn)) {
             HASH_FIND_STR(agent->user_tbl,conn->user,u);
             if (u) {
-                pres=check_user_region(u,conn->pos);
-                if (pres==POLICY_DENY_REGION) {
+                pres=check_user_policy(agent,u,conn->mntpnt,conn->type,conn->pos,0);
+                if (pres==CORS_CORR_POLICY_REGION) {
                     deny_policy(agent,conn,pres);
                     return 0;
                 }
@@ -448,8 +415,8 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
     strncpy(conn->user,u->user,sizeof(conn->user)-1);
     conn->user[sizeof(conn->user)-1]='\0';
 
-    pres=check_user_policy(agent,u,mntpnt,conn->pos);
-    if (pres!=POLICY_OK) {
+    pres=check_user_policy(agent,u,mntpnt,conn->type,conn->pos,1);
+    if (pres!=CORS_CORR_POLICY_OK) {
         deny_policy(agent,conn,pres);
         return 0;
     }
