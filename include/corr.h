@@ -107,6 +107,8 @@ typedef struct cors_corr_cfg {
     int    auto_vrs_min_fixed_bls;
     int    auto_mac_min_fixed_bls;
     int    auto_fkp_min_stations;
+    int    source_rinex_enable;
+    char   source_rinex_dir[MAXSTRPATH];
 } cors_corr_cfg_t;
 
 /* Profil utilisateur étendu (évolution future de conf/agentuser) */

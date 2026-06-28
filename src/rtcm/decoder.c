@@ -7,6 +7,7 @@
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
 #include "mcors.h"
+#include "source_rinex.h"
 
 #define REFINE_RTCM_DECODER    1
 
@@ -73,6 +74,11 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
     cors_stas_t *stas=&cors->stas;
     obs_t *obs=&rtcm->obs;
     nav_t *nav=&rtcm->nav;
+    cors_ntrip_source_info_t *info=NULL;
+
+    if (cors->role!=CORS_ROLE_SUPERVISOR) {
+        HASH_FIND(ii,ntrip->info_tbl[1],&rtcm->srcid,sizeof(int),info);
+    }
 
     if (ret==1) {
         cors_updobs(&cors->obs,obs->data,obs->n,rtcm->srcid);
@@ -80,11 +86,18 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
             cors_shm_publish_obs((cors_shm_t *)cors->mproc_shm, obs->data, obs->n, rtcm->srcid);
         }
         cors_pnt_pos(pnt,obs->data,obs->n,rtcm->srcid);
+        if (info&&cors->role!=CORS_ROLE_SUPERVISOR) {
+            cors_source_rinex_obs(rtcm->srcid,info->name,obs->data,obs->n,
+                                  &cors->nav.data,info->pos);
+        }
     }
     else if (ret==2) {
         cors_updnav(&cors->nav,nav,rtcm->ephsat,rtcm->ephset);
         if (cors->role == CORS_ROLE_WORKER && cors->mproc_shm) {
             cors_shm_publish_nav((cors_shm_t *)cors->mproc_shm, nav, rtcm->ephsat, rtcm->ephset);
+        }
+        if (cors->role!=CORS_ROLE_SUPERVISOR) {
+            cors_source_rinex_nav(rtcm->srcid,nav,rtcm->ephsat,rtcm->ephset);
         }
 #if CORS_MONITOR
         if (cors->role != CORS_ROLE_WORKER) {
@@ -95,6 +108,9 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
     else if (ret==5) {
         cors_updsta(stas,&rtcm->sta,rtcm->srcid);
         cors_ntrip_source_updpos(ntrip,rtcm->sta.pos,rtcm->srcid);
+        if (cors->role!=CORS_ROLE_SUPERVISOR) {
+            cors_source_rinex_sta(rtcm->srcid,&rtcm->sta);
+        }
         if (cors->role != CORS_ROLE_WORKER && cors->nrtk.state) {
             cors_dtrignet_upd_vertex(&cors->nrtk.dtrig_net,rtcm->sta.pos,rtcm->srcid);
         }

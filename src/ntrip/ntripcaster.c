@@ -7,6 +7,7 @@
  *-----------------------------------------------------------------------------*/
 #include "cors.h"
 #include "mcors.h"
+#include "source_rinex.h"
 
 static int on_read_cb(void* userdata, const uint8_t *data, int n)
 {
@@ -227,6 +228,7 @@ static void do_del_source(ntrip_del_source_t *data)
 
     HASH_FIND(hh,ntrip->info_tbl[0],data->name,strlen(data->name),info);
     if (info) {
+        cors_source_rinex_end(info->ID);
         HASH_DELETE(hh,ntrip->info_tbl[0],info);
         HASH_DELETE(ii,ntrip->info_tbl[1],info);
         free(info);

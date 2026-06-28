@@ -7,6 +7,7 @@
 #include "supervision.h"
 #include "policy.h"
 #include "log.h"
+#include "source_rinex.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -387,6 +388,7 @@ extern void cors_corr_close(void)
     }
     cors_corr_supervision_fini();
     cors_corr_registry_free(&g_corr_reg);
+    cors_source_rinex_fini();
     memset(&g_corr_ctx,0,sizeof(g_corr_ctx));
 }
 
