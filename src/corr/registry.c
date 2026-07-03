@@ -63,7 +63,7 @@ static void parse_mount_line(cors_corr_registry_t *reg, char *line)
     strncpy(def.name,name,sizeof(def.name)-1);
     if (source) strncpy(def.source,source,sizeof(def.source)-1);
     if (format) strncpy(def.format,format,sizeof(def.format)-1);
-    else strcpy(def.format,"RTCM3");
+    else snprintf(def.format,sizeof(def.format),"%s","RTCM3");
     if (priority) strncpy(def.priority,priority,sizeof(def.priority)-1);
     if (def.mode==CORS_CORR_NEAR) def.legacy_type=CORS_CORR_LEGACY_TYPE_NEAR;
     else if (def.mode==CORS_CORR_RELAY) def.legacy_type=CORS_CORR_LEGACY_TYPE_RELAY;
@@ -114,8 +114,11 @@ extern int cors_corr_registry_add(cors_corr_registry_t *reg, const cors_mountpoi
     HASH_FIND_STR(reg->mnt_tbl,def->name,m);
     if (!m) {
         m=calloc(1,sizeof(*m));
+        if (!m) return 0;
+        *m=*def;
         HASH_ADD_STR(reg->mnt_tbl,name,m);
         reg->n_mnt++;
+        return 1;
     }
     *m=*def;
     return 1;

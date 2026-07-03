@@ -336,7 +336,7 @@ extern int cors_corr_sourcetable_build(const cors_corr_ctx_t *ctx,
             strncpy(scratch.name,info->name,sizeof(scratch.name)-1);
             scratch.mode=CORS_CORR_RELAY;
             scratch.legacy_type=CORS_CORR_LEGACY_TYPE_RELAY;
-            strcpy(scratch.format,"RTCM3");
+            snprintf(scratch.format,sizeof(scratch.format),"%s","RTCM3");
             snprintf(scratch.desc,sizeof(scratch.desc),"Physical base %s",info->name);
             append_mount_if_allowed(ctx,user,&scratch,buf,max_len,&n);
             if (n>=max_len-256) break;
@@ -356,7 +356,7 @@ extern int cors_corr_sourcetable_build(const cors_corr_ctx_t *ctx,
             strncpy(scratch.name,vsta->name,sizeof(scratch.name)-1);
             scratch.mode=CORS_CORR_VRS_FIXED;
             scratch.legacy_type=CORS_CORR_LEGACY_TYPE_RELAY;
-            strcpy(scratch.format,"RTCM3_MSM7");
+            snprintf(scratch.format,sizeof(scratch.format),"%s","RTCM3_MSM7");
             snprintf(scratch.desc,sizeof(scratch.desc),"VRS fixed %s",vsta->name);
             append_mount_if_allowed(ctx,user,&scratch,buf,max_len,&n);
             if (n>=max_len-256) break;
