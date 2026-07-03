@@ -168,7 +168,9 @@ EXPORT int  cors_corr_registry_add(cors_corr_registry_t *reg,
  *   3. sinon RTCM32 → NEAR ;
  *   4. sinon NULL (mountpoint inconnu).
  *
- * is_vrs_fixed : 1 si le nom correspond à une station virtuelle addvsta.
+ * @param is_vrs_fixed 1 si le nom correspond à une station virtuelle addvsta.
+ * @param scratch      Buffer sortie si résolution legacy (non alloué).
+ * @return Pointeur registre ou scratch ; NULL si inconnu.
  */
 EXPORT const cors_mountpoint_def_t *
             cors_corr_resolve_mountpoint(const cors_corr_ctx_t *ctx,
@@ -187,10 +189,18 @@ EXPORT const char *cors_corr_mode_str(cors_corr_mode_t mode);
 EXPORT cors_corr_mode_t cors_corr_mode_parse(const char *str);
 
 /* -------------------------------------------------------------------------- */
-/* Politique utilisateur                                                      */
+/* Politique utilisateur (lab : conf/agentusers + policy.c)                   */
 /* -------------------------------------------------------------------------- */
 
-/* active_sessions : sessions actives pour quota ; < 0 = ne pas vérifier le quota */
+/**
+ * @brief Vérifie droits utilisateur avant ou pendant une session rover.
+ * @param ctx             Contexte corr (registre + agent + moteur).
+ * @param user            Nom utilisateur NTRIP (après auth Basic).
+ * @param mode            Mode de correction demandé (VRS, FKP, …).
+ * @param pos             Position rover ECEF (3) ; NULL si inconnue.
+ * @param active_sessions Nombre de sessions actives pour quota ; <0 ignore le quota.
+ * @return CORS_CORR_POLICY_OK ou code de refus (→ HTTP 403 côté agent).
+ */
 EXPORT cors_corr_policy_result_t
             cors_corr_policy_check(const cors_corr_ctx_t *ctx,
                                    const char *user,
@@ -198,52 +208,93 @@ EXPORT cors_corr_policy_result_t
                                    const double pos[3],
                                    int active_sessions);
 
+/** @brief Libellé lisible d'un résultat policy (logs, traces lab). */
 EXPORT const char *cors_corr_policy_result_str(cors_corr_policy_result_t result);
 
-/* Mode effectif pour policy (résolution mountpoint + legacy conn type) */
+/**
+ * @brief Résout le mode effectif d'un mountpoint (registre + legacy conn->type).
+ * @param legacy_conn_type Valeur conn->type héritée (1=relay, 2=near, 3=corr).
+ */
 EXPORT cors_corr_mode_t cors_corr_mode_for_mountpoint(const cors_corr_ctx_t *ctx,
                                                       const char *mntpnt,
                                                       int legacy_conn_type);
 
 /* -------------------------------------------------------------------------- */
-/* Cycle de vie session                                                       */
+/* Cycle de vie session (appelé par ntripagent sur chaque connexion rover)    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * @brief Attache un handler de correction à une connexion authentifiée.
+ * @return 1 si attach() du service a réussi, 0 sinon (policy ou handler absent).
+ */
 EXPORT int  cors_corr_session_attach(cors_corr_session_t *sess,
                                      const cors_corr_ctx_t *ctx,
                                      cors_ntrip_conn_t *conn,
                                      const cors_mountpoint_def_t *mntdef);
 
+/** @brief Met à jour la position rover (GGA décodée) et notifie le handler. */
 EXPORT int  cors_corr_session_on_gga(cors_corr_session_t *sess,
                                      const double pos[3]);
 
+/** @brief Produit un paquet RTCM ; retourne nb octets écrits dans buf (0 si rien). */
 EXPORT int  cors_corr_session_produce(cors_corr_session_t *sess,
                                       uint8_t *buf, int max_len,
                                       const nav_t *nav);
 
+/** @brief Libère l'état handler (detach) ; idempotent. */
 EXPORT void cors_corr_session_detach(cors_corr_session_t *sess);
 
 /* -------------------------------------------------------------------------- */
 /* Sourcetable NTRIP                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * @brief Construit le corps SOURCETABLE filtré par policy utilisateur.
+ * @param user NULL = liste publique (sans filtre modes/région).
+ * @return Nombre d'octets écrits dans buf (sans en-tête HTTP).
+ */
 EXPORT int  cors_corr_sourcetable_build(const cors_corr_ctx_t *ctx,
                                         const cors_ntrip_user_t *user,
                                         char *buf, int max_len);
 
-/* Runtime init (called from cors_start) */
+/* -------------------------------------------------------------------------- */
+/* Initialisation moteur (lab : cors_start → cors_corr_init)                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * @brief Initialise registre mountpoints, policy et supervision.
+ * @param mountpoints_file Chemin conf/mountpoints ; NULL = défaut builtin.
+ */
 EXPORT int  cors_corr_init(cors_t *cors, cors_ntrip_agent_t *agent,
                            const char *mountpoints_file);
+
+/** @brief Arrête sessions actives et libère registre (shutdown propre). */
 EXPORT void cors_corr_close(void);
+
+/** @brief Accès lecture au contexte global (NULL avant cors_corr_init). */
 EXPORT const cors_corr_ctx_t *cors_corr_ctx_get(void);
 
-/* Per-connection helpers for ntripagent */
+/* -------------------------------------------------------------------------- */
+/* Helpers connexion NTRIP (wrappers session par connexion rover)             */
+/* -------------------------------------------------------------------------- */
+
+/** @brief Démarre une session corr après ICY 200 OK (mountpoint résolu). */
 EXPORT int  cors_corr_conn_begin(cors_ntrip_conn_t *conn,
                                  const cors_mountpoint_def_t *mntdef);
+
+/** @brief Relaye une GGA vers la session (VRS dyn, NEAR, géofence). */
 EXPORT int  cors_corr_conn_gga(cors_ntrip_conn_t *conn, const double *pos);
+
+/** @brief Termine la session et retire l'entrée du registre actif. */
 EXPORT void cors_corr_conn_end(cors_ntrip_conn_t *conn);
+
+/** @brief Nom mountpoint effectif (AUTO résolu) dans mntpnt[n]. */
 EXPORT int  cors_corr_conn_output(cors_ntrip_conn_t *conn, char *mntpnt, int n);
+
+/** @brief Encode et envoie RTCM pour cette connexion si données disponibles. */
 EXPORT int  cors_corr_conn_push(cors_ntrip_conn_t *conn);
+
+/** @brief Configuration corr chargée depuis conf/corr.conf. */
 EXPORT const cors_corr_cfg_t *cors_corr_cfg_get(void);
 
 #ifdef __cplusplus
