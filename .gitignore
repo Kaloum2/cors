@@ -52,7 +52,9 @@ __pycache__/
 *.smod
 
 # Runtime artifacts (cors-engine)
-*.trace
+# Traces / captures (may contain credentials or RTCM payloads)
+*.raw
+
 *.shm*
 *.idmaptbl
 *.log
