@@ -48,6 +48,20 @@ static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
 
 #define NTRIP_CONN_CORR  3
 
+static void safe_strcpy(char *dst, size_t dstsz, const char *src)
+{
+    if (!dst||dstsz==0) return;
+    if (!src) { dst[0]='\0'; return; }
+    snprintf(dst,dstsz,"%s",src);
+}
+
+static void on_ntrip_conn_close(uv_handle_t *handle)
+{
+    cors_ntrip_conn_t *conn=handle?handle->data:NULL;
+    free(handle);
+    free(conn);
+}
+
 static int test_mntpnt(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, const char *mntpnt)
 {
     cors_ntrip_source_info_t *info;
@@ -56,7 +70,7 @@ static int test_mntpnt(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, const
     const cors_corr_ctx_t *ctx;
 
     HASH_FIND_STR(agent->ntrip->info_tbl[0],mntpnt,info);
-    strcpy(conn->mntpnt,mntpnt);
+    safe_strcpy(conn->mntpnt,sizeof(conn->mntpnt),mntpnt);
     if (info) return CORS_CORR_LEGACY_TYPE_RELAY;
 
     ctx=cors_corr_ctx_get();
@@ -274,7 +288,7 @@ static int test_vstachg(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, char
     info=kd_res_item_data(res);
 
     if (strcmp(new_mntpnt,info->name)) {
-        strcpy(new_mntpnt,info->name);
+        safe_strcpy(new_mntpnt,sizeof(new_mntpnt),info->name);
         return 1;
     }
     return 0;
@@ -300,7 +314,7 @@ static int test_gga_msg(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, cons
 static cors_ntrip_conn_q_t *new_conn_q(cors_ntrip_agent_t *agent, const char *mntpnt)
 {
     cors_ntrip_conn_q_t *q=calloc(1,sizeof(cors_ntrip_conn_q_t));
-    strcpy(q->mntpnt,mntpnt);
+    safe_strcpy(q->mntpnt,sizeof(q->mntpnt),mntpnt);
     HASH_ADD_STR(agent->cq_tbl,mntpnt,q);
     return q;
 }
@@ -332,8 +346,8 @@ static void agent_upd_conn(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
         *c=*conn;
         c->conn=(uv_tcp_t*)str;
     }
-    strcpy(conn->mntpnt,new_mntpnt);
-    strcpy(c->mntpnt,new_mntpnt);
+    safe_strcpy(conn->mntpnt,sizeof(conn->mntpnt),new_mntpnt);
+    safe_strcpy(c->mntpnt,sizeof(c->mntpnt),new_mntpnt);
     HASH_ADD_PTR(q_c->cs,conn,c);
     c->sta_chg=1;
     uv_mutex_unlock(&agent->cq_lock);
@@ -383,7 +397,7 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
         return 0;
     }
     if ((p=strchr(url,'/'))) {
-        if (*(p+1)) strcpy(mntpnt,p+1);
+        if (*(p+1)) safe_strcpy(mntpnt,sizeof(mntpnt),p+1);
     }
 
     /* sourcetable: GET / HTTP/1.0 (mountpoint vide) */
@@ -488,7 +502,7 @@ static void do_del_ntripconn(agent_del_ntripconn_t *data)
     cors_ntrip_conn_q_t *cq;
 
     HASH_FIND_PTR(agent->conn_tbl,&data->conn->conn,c);
-    if (!c) return;
+    if (!c) { free(data); return; }
 
     if (c->type==NTRIP_CONN_CORR) cors_corr_conn_end(c);
 
@@ -500,10 +514,13 @@ static void do_del_ntripconn(agent_del_ntripconn_t *data)
         HASH_FIND_PTR(cq->cs,&c->conn,t);
         if (t) HASH_DEL(cq->cs,t); free(t);
     }
-    uv_close((uv_handle_t*)c->conn,on_close_cb);
     HASH_DEL(agent->conn_tbl,c);
     uv_mutex_unlock(&agent->cq_lock);
-    free(c); free(data);
+
+    uv_read_stop((uv_stream_t*)c->conn);
+    c->conn->data=c;
+    uv_close((uv_handle_t*)c->conn,on_ntrip_conn_close);
+    free(data);
 }
 
 static void on_del_ntripconn_cb(uv_async_t *handle)
@@ -579,7 +596,11 @@ static void do_agent_send_data_work(agent_send_data_t *data)
     cors_ntrip_conn_t *c,*t;
 
     HASH_FIND_STR(agent->cq_tbl,data->mntpnt,q);
-    if (!q) return;
+    if (!q) {
+        free(data->buff);
+        free(data);
+        return;
+    }
 
     uv_mutex_lock(&agent->cq_lock);
 
@@ -743,8 +764,8 @@ static agent_send_data_t *new_agent_data(cors_ntrip_agent_t *agent, const char *
     data->agent=agent;
     data->nb=nb;
     data->nav=nav;
-    strcpy(data->mntpnt,mntpnt);
-    data->buff=calloc(nb,sizeof(char)*nb);
+    safe_strcpy(data->mntpnt,sizeof(data->mntpnt),mntpnt);
+    data->buff=calloc(1,(size_t)nb);
     memcpy(data->buff,buff,nb);
     return data;
 }
