@@ -10,7 +10,12 @@
 #include <string.h>
 #include <errno.h>
 
-#ifndef WIN32
+#ifdef WIN32
+#include <windows.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -24,11 +29,15 @@ static size_t cors_shm_segment_size(void)
 
 static void cors_shm_init_mutex(pthread_mutex_t *mutex)
 {
+#ifndef WIN32
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
     pthread_mutex_init(mutex, &attr);
     pthread_mutexattr_destroy(&attr);
+#else
+    (void)mutex;
+#endif
 }
 
 static void cors_shm_init_header(cors_shm_header_t *hdr, int workers)
@@ -37,10 +46,12 @@ static void cors_shm_init_header(cors_shm_header_t *hdr, int workers)
     hdr->magic = MCORS_SHM_MAGIC;
     hdr->version = MCORS_SHM_VERSION;
     hdr->worker_count = (uint32_t)workers;
+#ifndef WIN32
     cors_shm_init_mutex(&hdr->nav_lock);
     cors_shm_init_mutex(&hdr->obs_lock);
     cors_shm_init_mutex(&hdr->blsol_lock);
     cors_shm_init_mutex(&hdr->rtcm_lock);
+#endif
 }
 
 static void cors_shm_init_nav_arrays(cors_shm_header_t *hdr)
@@ -122,13 +133,149 @@ static int cors_shm_map(cors_shm_t *shm, const char *name, int create, int worke
 
 #endif /* WIN32 */
 
+#ifdef WIN32
+
+static HANDLE cors_shm_win_mutex(cors_shm_t *shm, const char *suffix)
+{
+    char name[128];
+    snprintf(name, sizeof(name), "Local\\cors_shm_%s_%s", shm->name, suffix);
+    return CreateMutexA(NULL, FALSE, name);
+}
+
+static void cors_shm_lock_nav(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_nav) WaitForSingleObject((HANDLE)shm->mtx_nav, INFINITE);
+}
+static void cors_shm_unlock_nav(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_nav) ReleaseMutex((HANDLE)shm->mtx_nav);
+}
+static void cors_shm_lock_obs(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_obs) WaitForSingleObject((HANDLE)shm->mtx_obs, INFINITE);
+}
+static void cors_shm_unlock_obs(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_obs) ReleaseMutex((HANDLE)shm->mtx_obs);
+}
+static void cors_shm_lock_blsol(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_blsol) WaitForSingleObject((HANDLE)shm->mtx_blsol, INFINITE);
+}
+static void cors_shm_unlock_blsol(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_blsol) ReleaseMutex((HANDLE)shm->mtx_blsol);
+}
+static void cors_shm_lock_rtcm(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_rtcm) WaitForSingleObject((HANDLE)shm->mtx_rtcm, INFINITE);
+}
+static void cors_shm_unlock_rtcm(cors_shm_t *shm)
+{
+    if (shm && shm->mtx_rtcm) ReleaseMutex((HANDLE)shm->mtx_rtcm);
+}
+
+static int cors_shm_map_win(cors_shm_t *shm, const char *name, int create, int workers)
+{
+    char map_name[128];
+    HANDLE hmap;
+    size_t size = cors_shm_segment_size();
+    void *base;
+    DWORD err;
+
+    snprintf(map_name, sizeof(map_name), "Local\\cors_shm_%s", name);
+    strncpy(shm->name, name, sizeof(shm->name) - 1);
+
+    hmap = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0,
+                              (DWORD)size, map_name);
+    if (!hmap) {
+        log_trace(1, "cors_shm_map_win: CreateFileMapping %s error: %lu\n", map_name,
+                  (unsigned long)GetLastError());
+        return 0;
+    }
+    err = GetLastError();
+    if (!create && err != ERROR_ALREADY_EXISTS) {
+        CloseHandle(hmap);
+        log_trace(1, "cors_shm_map_win: segment %s not found\n", map_name);
+        return 0;
+    }
+    shm->creator = create ? 1 : 0;
+    base = MapViewOfFile(hmap, FILE_MAP_ALL_ACCESS, 0, 0, size);
+    if (!base) {
+        log_trace(1, "cors_shm_map_win: MapViewOfFile error: %lu\n",
+                  (unsigned long)GetLastError());
+        CloseHandle(hmap);
+        return 0;
+    }
+    shm->map_handle = hmap;
+    shm->base = base;
+    shm->size = size;
+    shm->hdr = (cors_shm_header_t *)base;
+    shm->mtx_nav = cors_shm_win_mutex(shm, "nav");
+    shm->mtx_obs = cors_shm_win_mutex(shm, "obs");
+    shm->mtx_blsol = cors_shm_win_mutex(shm, "blsol");
+    shm->mtx_rtcm = cors_shm_win_mutex(shm, "rtcm");
+    if (!shm->mtx_nav || !shm->mtx_obs || !shm->mtx_blsol || !shm->mtx_rtcm) {
+        log_trace(1, "cors_shm_map_win: mutex create failed\n");
+        cors_shm_close(shm);
+        return 0;
+    }
+    if (create) {
+        cors_shm_init_header(shm->hdr, workers);
+        cors_shm_init_nav_arrays(shm->hdr);
+    }
+    else if (shm->hdr->magic != MCORS_SHM_MAGIC || shm->hdr->version != MCORS_SHM_VERSION) {
+        log_trace(1, "cors_shm_map_win: invalid shm header\n");
+        cors_shm_close(shm);
+        return 0;
+    }
+    return 1;
+}
+
+#else /* !WIN32 */
+
+static void cors_shm_lock_nav(cors_shm_t *shm)
+{
+    pthread_mutex_lock(&shm->hdr->nav_lock);
+}
+static void cors_shm_unlock_nav(cors_shm_t *shm)
+{
+    pthread_mutex_unlock(&shm->hdr->nav_lock);
+}
+static void cors_shm_lock_obs(cors_shm_t *shm)
+{
+    pthread_mutex_lock(&shm->hdr->obs_lock);
+}
+static void cors_shm_unlock_obs(cors_shm_t *shm)
+{
+    pthread_mutex_unlock(&shm->hdr->obs_lock);
+}
+static void cors_shm_lock_blsol(cors_shm_t *shm)
+{
+    pthread_mutex_lock(&shm->hdr->blsol_lock);
+}
+static void cors_shm_unlock_blsol(cors_shm_t *shm)
+{
+    pthread_mutex_unlock(&shm->hdr->blsol_lock);
+}
+static void cors_shm_lock_rtcm(cors_shm_t *shm)
+{
+    pthread_mutex_lock(&shm->hdr->rtcm_lock);
+}
+static void cors_shm_unlock_rtcm(cors_shm_t *shm)
+{
+    pthread_mutex_unlock(&shm->hdr->rtcm_lock);
+}
+
+#endif /* WIN32 */
+
 extern int cors_shm_create(cors_shm_t *shm, const char *name, int workers)
 {
     if (!shm || !name || !*name) return 0;
     memset(shm, 0, sizeof(*shm));
 #ifdef WIN32
-    log_trace(1, "cors_shm_create: WIN32 shared memory not yet implemented\n");
-    return 0;
+    if (workers <= 0 || workers > MCORS_MAX_WORKERS) workers = 1;
+    return cors_shm_map_win(shm, name, 1, workers);
 #else
     if (workers <= 0 || workers > MCORS_MAX_WORKERS) workers = 1;
     return cors_shm_map(shm, name, 1, workers);
@@ -140,8 +287,7 @@ extern int cors_shm_open(cors_shm_t *shm, const char *name)
     if (!shm || !name || !*name) return 0;
     memset(shm, 0, sizeof(*shm));
 #ifdef WIN32
-    log_trace(1, "cors_shm_open: WIN32 shared memory not yet implemented\n");
-    return 0;
+    return cors_shm_map_win(shm, name, 0, 0);
 #else
     return cors_shm_map(shm, name, 0, 0);
 #endif
@@ -151,7 +297,16 @@ extern void cors_shm_close(cors_shm_t *shm)
 {
     if (!shm || !shm->base) return;
 #ifdef WIN32
-    return;
+    if (shm->mtx_nav) CloseHandle((HANDLE)shm->mtx_nav);
+    if (shm->mtx_obs) CloseHandle((HANDLE)shm->mtx_obs);
+    if (shm->mtx_blsol) CloseHandle((HANDLE)shm->mtx_blsol);
+    if (shm->mtx_rtcm) CloseHandle((HANDLE)shm->mtx_rtcm);
+    shm->mtx_nav = shm->mtx_obs = shm->mtx_blsol = shm->mtx_rtcm = NULL;
+    UnmapViewOfFile(shm->base);
+    if (shm->map_handle) CloseHandle((HANDLE)shm->map_handle);
+    shm->map_handle = NULL;
+    shm->base = NULL;
+    shm->hdr = NULL;
 #else
     munmap(shm->base, shm->size);
     if (shm->creator) {
@@ -200,26 +355,26 @@ extern void cors_shm_publish_nav(cors_shm_t *shm, const nav_t *nav, int ephsat, 
 {
     nav_t shm_nav;
     if (!shm || !shm->hdr || !nav) return;
-    pthread_mutex_lock(&shm->hdr->nav_lock);
+    cors_shm_lock_nav(shm);
     shm_nav = cors_shm_nav_view(shm->hdr);
     cors_shm_updnav_locked(&shm_nav, nav, ephsat, ephset);
     memcpy(shm->hdr->nav_glo_fcn, shm_nav.glo_fcn, sizeof(shm->hdr->nav_glo_fcn));
     shm->hdr->nav_valid = 1;
-    pthread_mutex_unlock(&shm->hdr->nav_lock);
+    cors_shm_unlock_nav(shm);
 }
 
 extern void cors_shm_sync_nav(cors_shm_t *shm, cors_nav_t *cors_nav)
 {
     if (!shm || !shm->hdr || !cors_nav) return;
     if (!shm->hdr->nav_valid) return;
-    pthread_mutex_lock(&shm->hdr->nav_lock);
+    cors_shm_lock_nav(shm);
     if (cors_nav->data.eph) {
         memcpy(cors_nav->data.eph, shm->hdr->nav_eph, sizeof(eph_t) * MAXSAT * 4);
         memcpy(cors_nav->data.geph, shm->hdr->nav_geph, sizeof(geph_t) * NSATGLO * 2);
         memcpy(cors_nav->data.seph, shm->hdr->nav_seph, sizeof(seph_t) * NSATSBS * 2);
         memcpy(cors_nav->data.glo_fcn, shm->hdr->nav_glo_fcn, sizeof(shm->hdr->nav_glo_fcn));
     }
-    pthread_mutex_unlock(&shm->hdr->nav_lock);
+    cors_shm_unlock_nav(shm);
 }
 
 extern void cors_shm_publish_obs(cors_shm_t *shm, const obsd_t *obsd, int n, int srcid)
@@ -227,7 +382,7 @@ extern void cors_shm_publish_obs(cors_shm_t *shm, const obsd_t *obsd, int n, int
     int i;
     if (!shm || !shm->hdr || !obsd || n <= 0 || n > MAXOBS) return;
 
-    pthread_mutex_lock(&shm->hdr->obs_lock);
+    cors_shm_lock_obs(shm);
     for (i = 0; i < MCORS_MAX_OBS_SLOTS; i++) {
         cors_shm_obs_slot_t *slot = &shm->hdr->obs[i];
         if (!slot->valid || slot->srcid == srcid) {
@@ -236,11 +391,11 @@ extern void cors_shm_publish_obs(cors_shm_t *shm, const obsd_t *obsd, int n, int
             slot->n = n;
             slot->time = obsd[0].time;
             memcpy(slot->obs, obsd, sizeof(obsd_t) * n);
-            pthread_mutex_unlock(&shm->hdr->obs_lock);
+            cors_shm_unlock_obs(shm);
             return;
         }
     }
-    pthread_mutex_unlock(&shm->hdr->obs_lock);
+    cors_shm_unlock_obs(shm);
     log_trace(2, "cors_shm_publish_obs: no slot for srcid %d\n", srcid);
 }
 
@@ -249,14 +404,14 @@ extern int cors_shm_sync_obs(cors_shm_t *shm, cors_obs_t *cors_obs)
     int i, synced = 0;
     if (!shm || !shm->hdr || !cors_obs) return 0;
 
-    pthread_mutex_lock(&shm->hdr->obs_lock);
+    cors_shm_lock_obs(shm);
     for (i = 0; i < MCORS_MAX_OBS_SLOTS; i++) {
         cors_shm_obs_slot_t *slot = &shm->hdr->obs[i];
         if (!slot->valid || slot->n <= 0) continue;
         cors_updobs(cors_obs, slot->obs, slot->n, slot->srcid);
         synced++;
     }
-    pthread_mutex_unlock(&shm->hdr->obs_lock);
+    cors_shm_unlock_obs(shm);
     return synced;
 }
 
@@ -266,7 +421,7 @@ extern void cors_shm_publish_blsol(cors_shm_t *shm, const rtk_t *rtk,
     int i;
     if (!shm || !shm->hdr || !rtk) return;
 
-    pthread_mutex_lock(&shm->hdr->blsol_lock);
+    cors_shm_lock_blsol(shm);
     for (i = 0; i < MCORS_MAX_BLSOL_SLOTS; i++) {
         cors_shm_blsol_slot_t *slot = &shm->hdr->blsols[i];
         if (!slot->valid ||
@@ -275,11 +430,11 @@ extern void cors_shm_publish_blsol(cors_shm_t *shm, const rtk_t *rtk,
             slot->base_srcid = base_srcid;
             slot->rover_srcid = rover_srcid;
             slot->rtk = *rtk;
-            pthread_mutex_unlock(&shm->hdr->blsol_lock);
+            cors_shm_unlock_blsol(shm);
             return;
         }
     }
-    pthread_mutex_unlock(&shm->hdr->blsol_lock);
+    cors_shm_unlock_blsol(shm);
 }
 
 extern int cors_shm_sync_blsols(cors_shm_t *shm, cors_blsols_t *blsols)
@@ -289,14 +444,14 @@ extern int cors_shm_sync_blsols(cors_shm_t *shm, cors_blsols_t *blsols)
 
     if (!shm || !shm->hdr || !blsols) return 0;
 
-    pthread_mutex_lock(&shm->hdr->blsol_lock);
+    cors_shm_lock_blsol(shm);
     for (i = 0; i < MCORS_MAX_BLSOL_SLOTS; i++) {
         cors_shm_blsol_slot_t *slot = &shm->hdr->blsols[i];
         if (!slot->valid) continue;
         cors_updblsol(blsols, &bl_stub, &slot->rtk, slot->base_srcid, slot->rover_srcid);
         synced++;
     }
-    pthread_mutex_unlock(&shm->hdr->blsol_lock);
+    cors_shm_unlock_blsol(shm);
     return synced;
 }
 
@@ -307,10 +462,10 @@ extern int cors_shm_publish_rtcm(cors_shm_t *shm, const uint8_t *data, int n, in
 
     if (!shm || !shm->hdr || !data || n <= 0 || n > MCORS_RTCM_MAX_PAYLOAD) return 0;
 
-    pthread_mutex_lock(&shm->hdr->rtcm_lock);
+    cors_shm_lock_rtcm(shm);
     next = (shm->hdr->rtcm_write_idx + 1) % MCORS_RTCM_RING_SLOTS;
     if (next == shm->hdr->rtcm_read_idx) {
-        pthread_mutex_unlock(&shm->hdr->rtcm_lock);
+        cors_shm_unlock_rtcm(shm);
         return 0;
     }
     slot = &shm->hdr->rtcm_ring[shm->hdr->rtcm_write_idx];
@@ -318,7 +473,7 @@ extern int cors_shm_publish_rtcm(cors_shm_t *shm, const uint8_t *data, int n, in
     slot->srcid = srcid;
     memcpy(slot->data, data, n);
     shm->hdr->rtcm_write_idx = next;
-    pthread_mutex_unlock(&shm->hdr->rtcm_lock);
+    cors_shm_unlock_rtcm(shm);
     return 1;
 }
 
@@ -331,14 +486,14 @@ extern int cors_shm_drain_rtcm(cors_shm_t *shm,
 
     if (!shm || !shm->hdr || !cb) return 0;
 
-    pthread_mutex_lock(&shm->hdr->rtcm_lock);
+    cors_shm_lock_rtcm(shm);
     while (shm->hdr->rtcm_read_idx != shm->hdr->rtcm_write_idx) {
         slot = &shm->hdr->rtcm_ring[shm->hdr->rtcm_read_idx];
         cb(userdata, slot->data, (int)slot->len, slot->srcid);
         shm->hdr->rtcm_read_idx = (shm->hdr->rtcm_read_idx + 1) % MCORS_RTCM_RING_SLOTS;
         count++;
     }
-    pthread_mutex_unlock(&shm->hdr->rtcm_lock);
+    cors_shm_unlock_rtcm(shm);
     return count;
 }
 

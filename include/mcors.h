@@ -97,6 +97,13 @@ typedef struct cors_shm {
     size_t size;
     void  *base;
     cors_shm_header_t *hdr;
+#ifdef WIN32
+    void  *map_handle;   /* HANDLE */
+    void  *mtx_nav;      /* HANDLE */
+    void  *mtx_obs;
+    void  *mtx_blsol;
+    void  *mtx_rtcm;
+#endif
 } cors_shm_t;
 
 /* -------------------------------------------------------------------------- */
