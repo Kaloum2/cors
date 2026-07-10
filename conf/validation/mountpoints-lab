@@ -1,0 +1,7 @@
+# Lab mountpoints — mirrors builtins for validation
+RTCM32,type=nearest,format=RTCM3
+NEAR,type=nearest,format=RTCM3
+VRS,type=vrs_dynamic,format=RTCM3_MSM7
+FKP,type=fkp,format=RTCM3_1034_1035
+MAC,type=mac,format=RTCM3_MAC
+AUTO,type=auto,priority=VRS,MAC,FKP,NEAREST

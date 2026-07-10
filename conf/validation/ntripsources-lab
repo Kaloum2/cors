@@ -1,0 +1,3 @@
+# Lab NTRIP sources — replace host/port with your mock caster or recorded stream
+# Format: name user pass addr port mntpnt lat lon height
+# LAB_MOCK lab lab 127.0.0.1 2101 MOCK 48.85 2.35 80.0
