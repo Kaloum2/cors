@@ -16,6 +16,20 @@
 #define NTRIP_RSP_SOURCETABLE_OK "SOURCETABLE 200 OK\r\n"
 #define NTRIP_SOURCETABLE_MAX (128*1024)
 
+#define AUTH_RL_MAX_FAIL     5
+#define AUTH_RL_WINDOW_SEC   60.0
+
+typedef struct auth_rl_entry {
+    char ip[48];
+    int fails;
+    gtime_t first_fail;
+    UT_hash_handle hh;
+} auth_rl_entry_t;
+
+static auth_rl_entry_t *auth_rl_tbl=NULL;
+static uv_mutex_t auth_rl_lock;
+static int auth_rl_lock_inited=0;
+
 typedef struct agent_del_ntripconn {
     cors_ntrip_agent_t *agent;
     cors_ntrip_conn_t *conn;
@@ -60,6 +74,91 @@ static void on_ntrip_conn_close(uv_handle_t *handle)
     cors_ntrip_conn_t *conn=handle?handle->data:NULL;
     free(handle);
     free(conn);
+}
+
+static void auth_rl_init(void)
+{
+    if (!auth_rl_lock_inited) {
+        uv_mutex_init(&auth_rl_lock);
+        auth_rl_lock_inited=1;
+    }
+}
+
+static void auth_rl_get_peer_ip(uv_stream_t *str, char *ip, int n)
+{
+    struct sockaddr_storage addr;
+    int len=(int)sizeof(addr);
+
+    ip[0]='\0';
+    if (!str||n<=0) return;
+    if (uv_tcp_getpeername((uv_tcp_t*)str,(struct sockaddr*)&addr,&len)!=0) {
+        snprintf(ip,(size_t)n,"unknown");
+        return;
+    }
+    if (addr.ss_family==AF_INET) {
+        uv_ip4_name((struct sockaddr_in*)&addr,ip,n);
+    }
+    else if (addr.ss_family==AF_INET6) {
+        uv_ip6_name((struct sockaddr_in6*)&addr,ip,n);
+    }
+    else {
+        snprintf(ip,(size_t)n,"unknown");
+    }
+}
+
+static int auth_rl_blocked(const char *ip)
+{
+    auth_rl_entry_t *e;
+    double dt;
+
+    if (!ip||!ip[0]||!strcmp(ip,"unknown")) return 0;
+    uv_mutex_lock(&auth_rl_lock);
+    HASH_FIND_STR(auth_rl_tbl,ip,e);
+    if (!e) {
+        uv_mutex_unlock(&auth_rl_lock);
+        return 0;
+    }
+    dt=timediff(timeget(),e->first_fail);
+    if (dt>AUTH_RL_WINDOW_SEC) {
+        HASH_DEL(auth_rl_tbl,e);
+        free(e);
+        uv_mutex_unlock(&auth_rl_lock);
+        return 0;
+    }
+    if (e->fails>=AUTH_RL_MAX_FAIL) {
+        uv_mutex_unlock(&auth_rl_lock);
+        return 1;
+    }
+    uv_mutex_unlock(&auth_rl_lock);
+    return 0;
+}
+
+static void auth_rl_record_fail(const char *ip)
+{
+    auth_rl_entry_t *e;
+    gtime_t now=timeget();
+
+    if (!ip||!ip[0]||!strcmp(ip,"unknown")) return;
+    uv_mutex_lock(&auth_rl_lock);
+    HASH_FIND_STR(auth_rl_tbl,ip,e);
+    if (!e) {
+        e=calloc(1,sizeof(*e));
+        if (!e) { uv_mutex_unlock(&auth_rl_lock); return; }
+        strncpy(e->ip,ip,sizeof(e->ip)-1);
+        e->fails=1;
+        e->first_fail=now;
+        HASH_ADD_STR(auth_rl_tbl,ip,e);
+    }
+    else {
+        if (timediff(now,e->first_fail)>AUTH_RL_WINDOW_SEC) {
+            e->fails=1;
+            e->first_fail=now;
+        }
+        else {
+            e->fails++;
+        }
+    }
+    uv_mutex_unlock(&auth_rl_lock);
 }
 
 static int test_mntpnt(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, const char *mntpnt)
@@ -358,8 +457,11 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
 {
     char url[256]="",mntpnt[256]="",proto[256]="",*p,*q;
     char user[513]={0},user_pwd[256]={0},new_mntpnt[32]={0};
+    char peer_ip[48]={0};
     cors_ntrip_user_t *u=NULL;
     cors_corr_policy_result_t pres;
+
+    auth_rl_get_peer_ip(str,peer_ip,sizeof(peer_ip));
 
     if (conn->state) {
         test_gga_msg(agent,conn,buff);
@@ -404,8 +506,14 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
     if (!*mntpnt) {
         cors_ntrip_user_t *su=NULL;
 
+        if (auth_rl_blocked(peer_ip)) {
+            send_rsqc(agent,conn,CORS_NTRIP_RSP_UNAUTHORIZED);
+            ntripagnet_del_conn(agent,conn);
+            return 0;
+        }
         if (strstr(buff,"Authorization: Basic ")) {
             if (!parse_basic_auth(agent,buff,user,user_pwd,&su)) {
+                auth_rl_record_fail(peer_ip);
                 send_rsqc(agent,conn,CORS_NTRIP_RSP_UNAUTHORIZED);
                 ntripagnet_del_conn(agent,conn);
                 return 0;
@@ -421,7 +529,13 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
         ntripagnet_del_conn(agent,conn);
         return 0;
     }
+    if (auth_rl_blocked(peer_ip)) {
+        send_rsqc(agent,conn,CORS_NTRIP_RSP_UNAUTHORIZED);
+        ntripagnet_del_conn(agent,conn);
+        return 0;
+    }
     if (!parse_basic_auth(agent,buff,user,user_pwd,&u)) {
+        auth_rl_record_fail(peer_ip);
         send_rsqc(agent,conn,CORS_NTRIP_RSP_UNAUTHORIZED);
         ntripagnet_del_conn(agent,conn);
         return 0;
@@ -632,6 +746,7 @@ static void on_agent_send_cb(uv_async_t *handle)
 
 static void agent_init(uv_loop_t *loop, cors_ntrip_agent_t *agent)
 {
+    auth_rl_init();
     QUEUE_INIT(&agent->send_queue);
     QUEUE_INIT(&agent->del_queue);
 
