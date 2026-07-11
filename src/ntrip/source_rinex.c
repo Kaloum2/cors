@@ -128,6 +128,10 @@ static cors_source_rinex_t *src_rinex_get(int srcid, const char *name, int creat
 
     rec=calloc(1,sizeof(*rec));
     if (!rec) return NULL;
+    if (!cors_initnav(&rec->nav)) {
+        free(rec);
+        return NULL;
+    }
     rec->srcid=srcid;
     strncpy(rec->name,name,sizeof(rec->name)-1);
     HASH_ADD_INT(g_src_rinex_tbl,srcid,rec);
@@ -172,6 +176,7 @@ static void src_rinex_remove(cors_source_rinex_t *rec)
     if (!rec) return;
     src_rinex_close_obs(rec);
     HASH_DEL(g_src_rinex_tbl,rec);
+    cors_freenav(&rec->nav);
     free(rec);
 }
 

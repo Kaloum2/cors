@@ -101,7 +101,14 @@ static void nrtk_add_baseline(cors_nrtk_t *nrtk, int base_srcid, int rover_srcid
         p=s;
         break;
     }
-    if (!p&&!(p=new_srtk(nrtk))) return;
+    if (!p) {
+        if (nrtk->cors && nrtk->cors->srtk.state) {
+            p = &nrtk->cors->srtk;
+        }
+        else if (!(p = new_srtk(nrtk))) {
+            return;
+        }
+    }
     cors_srtk_add_baseline(p,base_srcid,rover_srcid);
 }
 

@@ -82,6 +82,13 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
     }
 
     if (ret==1) {
+        int i;
+
+        if (obs->n>0&&rtcm->time.time!=0) {
+            for (i=0;i<obs->n;i++) {
+                if (obs->data[i].time.time==0) obs->data[i].time=rtcm->time;
+            }
+        }
         cors_updobs(&cors->obs,obs->data,obs->n,rtcm->srcid);
         if (cors->role == CORS_ROLE_WORKER && cors->mproc_shm) {
             cors_shm_publish_obs((cors_shm_t *)cors->mproc_shm, obs->data, obs->n, rtcm->srcid);

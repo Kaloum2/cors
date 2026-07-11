@@ -36,8 +36,10 @@ static void start_cors(cors_t *cors)
     cors_ntrip_agent_start(&cors->agent,&cors->ntrip,cors->opt.agent_user_file);
     cors_rtcm_decoder_start(&cors->rtcm_decoder,cors);
     cors_pnt_start(&cors->pnt,cors);
-    cors_srtk_start(&cors->srtk,cors,NULL,cors->opt.baselines_file);
     cors_nrtk_start(&cors->nrtk,cors);
+    cors_srtk_start(&cors->srtk,cors,&cors->nrtk,cors->opt.baselines_file);
+    cors->srtk.ID=0;
+    HASH_ADD_INT(cors->nrtk.srtk,ID,&cors->srtk);
     cors_vrs_start(&cors->vrs,cors,&cors->nrtk,cors->opt.vstas_file);
     cors_monitor_start(&cors->monitor,cors);
 }
@@ -200,6 +202,9 @@ extern void cors_updnav(cors_nav_t *cors_nav, const nav_t *nav, int ephsat, int 
     eph_t *eph1,*eph2,*eph3;
     int prn;
 
+    if (!cors_nav||!nav||!nav->eph||!cors_nav->data.eph) return;
+    if (ephsat<=0||ephsat>MAXSAT) return;
+
     if (satsys(ephsat,&prn)!=SYS_GLO) {
         eph1=nav->eph+ephsat-1+MAXSAT*ephset;
         eph2=cors_nav->data.eph+ephsat-1+MAXSAT*ephset;
@@ -239,6 +244,8 @@ static cors_obsd_t* new_cors_obsd(cors_obsd_t **tbl, int srcid)
 
 extern void cors_updobs(cors_obs_t *cors_obs, const obsd_t *obsd, int n, int srcid)
 {
+    int i;
+
     if (n<=0) return;
 
     cors_obsd_t *s;
@@ -248,6 +255,12 @@ extern void cors_updobs(cors_obs_t *cors_obs, const obsd_t *obsd, int n, int src
     }
     memcpy(s->obs.data,obsd,sizeof(obsd_t)*n);
     s->obs.n=n;
+    if (s->obs.data[0].time.time==0) {
+        gtime_t now=utc2gpst(timeget());
+        for (i=0;i<s->obs.n;i++) {
+            if (s->obs.data[i].time.time==0) s->obs.data[i].time=now;
+        }
+    }
 }
 
 static cors_ssat_t* new_cors_ssat(cors_ssat_t **tbl, int srcid)
@@ -278,7 +291,7 @@ extern void cors_updssat(cors_ssats_t *cors_ssat, ssat_t *ssat, int srcid, int u
 
 static cors_sta_t* new_cors_sta(cors_sta_t **tbl, int srcid)
 {
-    cors_sta_t *s=calloc(1,sizeof(cors_ssat_t));
+    cors_sta_t *s=calloc(1,sizeof(cors_sta_t));
     s->srcid=srcid;
     HASH_ADD_INT(*tbl,srcid,s);
     return s;

@@ -146,6 +146,9 @@ static void cmd_add_source(char **args, int narg, vt_t *vt)
         return;
     }
     if (norm(srcpos,3)>0.0) {
+        sta_t sta={0};
+        matcpy(sta.pos,srcpos,1,3);
+        cors_updsta(&cors.stas,&sta,ret);
         cors_nrtk_add_source(&cors.nrtk,ret,srcpos);
     }
     else {
@@ -713,6 +716,10 @@ static void prrtkblsol(vt_t *vt, const char *rover, const char *base, int timety
 
     sprintf(bl_id,"%d->%d",b->ID,r->ID);
     HASH_FIND_STR(cors.srtk.bls.data,bl_id,bl);
+    if (!bl) {
+        sprintf(bl_id,"%d->%d",r->ID,b->ID);
+        HASH_FIND_STR(cors.srtk.bls.data,bl_id,bl);
+    }
 
     if (!bl) {
         vt_printf(vt,"no baseline: %s->%s\n",base,rover);

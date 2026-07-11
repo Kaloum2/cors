@@ -9,9 +9,9 @@
 #include "mcors.h"
 #include "options.h"
 
-#define SRTK_STRICT_TIME_SYNC    1
-#define SRTK_STRICT_BSTA_SYNC    1
-#define SRTK_SYNC_WAIT           1
+#define SRTK_STRICT_TIME_SYNC    0
+#define SRTK_STRICT_BSTA_SYNC    0
+#define SRTK_SYNC_WAIT           0
 #define SRTK_SYMMETRY_MODE       1
 
 typedef struct add_baseline {
@@ -75,41 +75,53 @@ static void upd_rbobs(const cors_obsd_t *obsr, const cors_obsd_t *obsb, obs_t **
     upd_obs(obsb,bobs);
 }
 
+static gtime_t obs_latest_time(const obs_t *obs)
+{
+    int i;
+
+    if (!obs||obs->n<=0) return (gtime_t){0};
+    for (i=obs->n-1;i>=0;i--) {
+        if (obs->data[i].time.time!=0) return obs->data[i].time;
+    }
+    return utc2gpst(timeget());
+}
+
 static gtime_t upd_bl_time(const obs_t *robs, const obs_t *bobs)
 {
-    gtime_t tr={0},tb={0};
+    gtime_t tr=obs_latest_time(robs);
+    gtime_t tb=obs_latest_time(bobs);
 
-    if (robs&&robs->n) tr=robs->data[0].time;
-    if (bobs&&bobs->n) tb=bobs->data[0].time;
-
+    if (tr.time==0) return tb;
+    if (tb.time==0) return tr;
     if (timediff(tr,tb)>0.0) return tr;
-    else return tb;
+    return tb;
 }
 
 static int bl_time_sync(cors_baseline_t *bl, cors_obs_t *obs, obs_t **robs, obs_t **bobs)
 {
     cors_obsd_t *obsd[2];
+    gtime_t time_cur={0};
+    int i,sync=0;
+
     HASH_FIND_INT(obs->data,&bl->rover_srcid,obsd[0]);
     HASH_FIND_INT(obs->data,&bl->base_srcid,obsd[1]);
 
-    if (!obsd[0]&&!obsd[1]) return 0;
+    if (!obsd[0]||!obsd[1]||obsd[0]->obs.n<=0||obsd[1]->obs.n<=0) {
+        return 0;
+    }
 
-    gtime_t time_cur={0};
-    int i,sync=0;
     time_cur=upd_bl_time(&obsd[0]->obs,&obsd[1]->obs);
+    if (time_cur.time==0) return 0;
+    if (bl->time.time!=0&&fabs(timediff(time_cur,bl->time))<1E-2) return 0;
 
 #if SRTK_STRICT_TIME_SYNC
     static double age=1E-2;
 #else
     static double age=15.0;
 #endif
-    if (fabs(timediff(time_cur,bl->time))<1E-2) {
-        return 0;
-    }
     for (i=0;i<2;i++) {
-        if (obsd[i]&&fabs(timediff(time_cur,obsd[i]->obs.data[0].time))<age) {
-            sync++;
-        }
+        gtime_t tobs=obs_latest_time(&obsd[i]->obs);
+        if (tobs.time!=0&&fabs(timediff(time_cur,tobs))<age) sync++;
     }
 #if SRTK_STRICT_BSTA_SYNC
     if (sync==2) {
@@ -120,12 +132,12 @@ static int bl_time_sync(cors_baseline_t *bl, cors_obs_t *obs, obs_t **robs, obs_
 #if SRTK_SYNC_WAIT
     static double mt=200.0;
     static double st=0.1;
-    if (sync&&++bl->wt>st*1E9/mt) {
+    if (sync==2&&++bl->wt>st*1E9/mt) {
         upd_rbobs(obsd[0],obsd[1],robs,bobs);
         return 1;
     }
 #else
-    if (sync) {
+    if (sync>=1) {
         upd_rbobs(obsd[0],obsd[1],robs,bobs);
         return 1;
     }
@@ -226,6 +238,7 @@ static void rtk_work_thread(void *srtk_arg)
     while (srtk->state) {
         if (srtk->state<=1) continue;
         rtk_process(srtk);
+        uv_sleep(1);
     }
 }
 
@@ -302,6 +315,8 @@ static void rtk_thread(void *srtk_arg)
         baseline_rtk_work(srtk);
         add_baseline_work(srtk);
         del_baseline_work(srtk);
+        rtk_process(srtk);
+        uv_sleep(1);
     }
 }
 

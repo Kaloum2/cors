@@ -183,7 +183,7 @@ static int str2enum(const char *str, const char *comment, int *val)
 
     for (p=comment;;p++) {
         if (!(p=strstr(p,str))) break;
-        if (*(p-1)!=':') continue;
+        if (p>comment&&*(p-1)!=':') continue;
         for (p-=2;'0'<=*p&&*p<='9';p--) ;
         return sscanf(p+1,"%d",val)==1;
     }
