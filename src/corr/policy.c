@@ -263,7 +263,7 @@ static int split_csv_line(char *buff, char *val[], int max_val)
     int n;
 
     for (n=0,p=buff;*p&&n<max_val;p=q+1) {
-        if ((q=strchr(p,','))||(q=strchr(p,'#'))) {
+        if ((q=strchr(p,','))) {
             val[n++]=p;
             *q='\0';
         }

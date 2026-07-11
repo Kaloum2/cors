@@ -3677,13 +3677,12 @@ extern int decbase64(const char *indata, int inlen, char *outdata, int *outlen)
             255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
             255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
             255, 255, 255, 255 };
-    int ret=0;
-    if (indata==NULL||inlen<=0||outdata==NULL) return -1;
-    if (inlen%4!=0) return -2;
-
     int t=0,x=0,y=0,i=0;
     unsigned char c=0;
     int g=3;
+
+    if (indata==NULL||inlen<=0||outdata==NULL) return -1;
+    if (inlen%4!=0) return -2;
 
     while (indata[x]!=0) {
         c=base64_suffix_map[indata[x++]];
@@ -3698,7 +3697,9 @@ extern int decbase64(const char *indata, int inlen, char *outdata, int *outlen)
             y=t=0;
         }
     }
-    return ret;
+    if (outlen) *outlen=i;
+    outdata[i]='\0';
+    return i>0?1:0;
 }
 extern int encbase64(char *str, const uint8_t *byte, int n)
 {

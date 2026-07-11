@@ -266,7 +266,7 @@ static int parse_basic_auth(cors_ntrip_agent_t *agent, const char *buff,
     if (n<=0||n>=(int)sizeof(cred)-1) return 0;
     memcpy(cred,p,n);
     cred[n]='\0';
-    if (!decbase64(cred,n,tmp,&len)) return 0;
+    if (decbase64(cred,n,tmp,&len)<0) return 0;
     sep=strchr(tmp,':');
     if (!sep) return 0;
     *sep='\0';
@@ -567,13 +567,42 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
 static void on_read_cb(uv_stream_t *str, ssize_t nr, const uv_buf_t *buf)
 {
     cors_ntrip_conn_t *conn=str->data;
+    char *msg;
 
     if (nr<0) {
         ntripagnet_del_conn(conn->agent,conn);
         free(buf->base);
         return;
     }
-    agent_test_msgc(conn->agent,conn,str,buf->base,nr);
+    if (nr==0||!buf->base) {
+        free(buf->base);
+        return;
+    }
+    if (!conn->state) {
+        if (conn->nb+(int)nr>=MAXBUFLEN) {
+            ntripagnet_del_conn(conn->agent,conn);
+            free(buf->base);
+            return;
+        }
+        memcpy(conn->buff+conn->nb,buf->base,(size_t)nr);
+        conn->nb+=(int)nr;
+        conn->buff[conn->nb]='\0';
+        free(buf->base);
+        if (!strstr(conn->buff,"\r\n\r\n")) return;
+        agent_test_msgc(conn->agent,conn,str,conn->buff,conn->nb);
+        conn->nb=0;
+        conn->buff[0]='\0';
+        return;
+    }
+    msg=malloc((size_t)nr+1);
+    if (!msg) {
+        free(buf->base);
+        return;
+    }
+    memcpy(msg,buf->base,(size_t)nr);
+    msg[nr]='\0';
+    agent_test_msgc(conn->agent,conn,str,msg,(int)nr);
+    free(msg);
     free(buf->base);
 }
 
