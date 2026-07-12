@@ -4,11 +4,15 @@
 FROM debian:bookworm-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake gfortran libsqlite3-dev \
+    build-essential cmake gfortran libsqlite3-dev git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 COPY . .
+
+RUN if [ ! -f lib/lapack/CMakeLists.txt ]; then \
+      git clone --depth 1 https://github.com/Reference-LAPACK/lapack.git lib/lapack; \
+    fi
 
 RUN mkdir -p build && cd build \
     && cmake .. \
