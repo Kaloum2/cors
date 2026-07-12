@@ -62,4 +62,6 @@ jobs:
           "
 
       - name: Docker build smoke
-        run: docker build -f docker/Dockerfile -t cors-engine:ci .
+        run: |
+          docker info >/dev/null
+          docker build -f docker/Dockerfile -t cors-engine:ci .

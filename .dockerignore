@@ -1,0 +1,16 @@
+# Explicit Docker context (overrides .gitignore). Do not list lib/lapack/ —
+# CI clones LAPACK before docker build; local builds may use Dockerfile fallback.
+.git/
+.github/
+build/
+build01/
+cmake-build-*/
+.cursor/
+graphify-out/
+test/e2e/
+doc/recap/
+doc/dev/
+doc/user/
+*.trace
+bin/linux/*.trace
+bin/win/*.trace

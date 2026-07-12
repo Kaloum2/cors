@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # cors-engine image — sidecar :7998, monitor :7999, agent :8002 (INT-03)
 
 FROM debian:bookworm-slim AS build
