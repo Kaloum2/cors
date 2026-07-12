@@ -9,7 +9,7 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 cmake "$ROOT"
-cmake --build . -j"$JOBS" --target cors-engine cors-mengine
+cmake --build . -j"$JOBS" --target cors-engine cors-mengine test_rtcm_fkp test_dtrignet
 
 echo "== cors-engine =="
 "$BUILD_DIR/cors-engine" -h 2>&1 | head -3 || true

@@ -22,4 +22,6 @@ target_link_libraries(test_rtkpos cors ${LIBS} uv_a lapack gfortran quadmath)
 add_executable(test_rtcm_encoder test_rtcm_encoder.c)
 target_link_libraries(test_rtcm_encoder cors ${LIBS} uv_a lapack gfortran quadmath)
 
+add_executable(test_rtcm_fkp test_rtcm_fkp.c)
+target_link_libraries(test_rtcm_fkp cors ${LIBS} uv_a lapack gfortran quadmath)
 
