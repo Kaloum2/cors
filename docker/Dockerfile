@@ -4,7 +4,7 @@
 FROM debian:bookworm-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake gfortran libsqlite3-dev git \
+    build-essential cmake ca-certificates gfortran git libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
