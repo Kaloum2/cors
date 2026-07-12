@@ -25,6 +25,12 @@ doc/recap/
 doc/dev/
 doc/user/
 doc/MENGINE.md
+doc/PLAN_ACTIONS.md
+doc/FONCTIONNALITES.md
+doc/tests_validation.md
+
+# Private field-test configs (real caster / network names)
+conf/validation/*REDACTED*
 
 # E2E tests and local scan configs (may contain private caster URLs)
 test/e2e/
