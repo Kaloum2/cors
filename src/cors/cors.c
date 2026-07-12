@@ -32,7 +32,7 @@ static void start_cors(cors_t *cors)
     cors->monitor.port=cors->opt.monitor_port;
 
     cors_ntrip_start(&cors->ntrip,cors,cors->opt.ntrip_sources_file);
-    cors_corr_init(cors,&cors->agent,"conf/mountpoints");
+    cors_corr_init(cors,&cors->agent);
     cors_ntrip_agent_start(&cors->agent,&cors->ntrip,cors->opt.agent_user_file);
     cors_rtcm_decoder_start(&cors->rtcm_decoder,cors);
     cors_pnt_start(&cors->pnt,cors);
@@ -72,7 +72,7 @@ static void start_cors_supervisor(cors_t *cors)
     cors->monitor.port = cors->opt.monitor_port;
 
     cors_ntrip_load_sources(&cors->ntrip, cors, cors->opt.ntrip_sources_file);
-    cors_corr_init(cors,&cors->agent,"conf/mountpoints");
+    cors_corr_init(cors,&cors->agent);
     cors_ntrip_agent_start(&cors->agent, &cors->ntrip, cors->opt.agent_user_file);
     cors_nrtk_start(&cors->nrtk, cors);
     cors_vrs_start(&cors->vrs, cors, &cors->nrtk, cors->opt.vstas_file);

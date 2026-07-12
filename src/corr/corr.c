@@ -367,11 +367,18 @@ extern int cors_corr_sourcetable_build(const cors_corr_ctx_t *ctx,
     return n;
 }
 
-extern int cors_corr_init(cors_t *cors, cors_ntrip_agent_t *agent, const char *mountpoints_file)
+extern int cors_corr_init(cors_t *cors, cors_ntrip_agent_t *agent)
 {
+    const char *mountpoints_file;
+    const char *corr_conf_file;
+
+    if (!cors) return 0;
+    mountpoints_file=cors->opt.mountpoints_file[0]?cors->opt.mountpoints_file:"conf/mountpoints";
+    corr_conf_file=cors->opt.corr_conf_file[0]?cors->opt.corr_conf_file:"conf/corr.conf";
+
     cors_corr_registry_init(&g_corr_reg);
-    corr_cfg_load("conf/corr.conf");
-    cors_corr_registry_load(&g_corr_reg,mountpoints_file?mountpoints_file:"conf/mountpoints");
+    corr_cfg_load(corr_conf_file);
+    cors_corr_registry_load(&g_corr_reg,mountpoints_file);
     g_corr_ctx.agent=agent;
     g_corr_ctx.registry=&g_corr_reg;
     g_corr_ctx.cors=cors;

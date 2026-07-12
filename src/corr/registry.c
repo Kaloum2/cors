@@ -81,7 +81,11 @@ static void load_mountpoints_file(cors_corr_registry_t *reg, const char *file)
         log_trace(1,"corr: mountpoints file not found: %s (using builtins)\n",file);
         return;
     }
-    while (fgets(buff,sizeof(buff),fp)) parse_mount_line(reg,buff);
+    while (fgets(buff,sizeof(buff),fp)) {
+        char *cr;
+        if ((cr=strchr(buff,'\r'))) *cr='\0';
+        parse_mount_line(reg,buff);
+    }
     fclose(fp);
 }
 
@@ -120,7 +124,11 @@ extern int cors_corr_registry_add(cors_corr_registry_t *reg, const cors_mountpoi
         reg->n_mnt++;
         return 1;
     }
-    *m=*def;
+    {
+        UT_hash_handle hh=m->hh;
+        *m=*def;
+        m->hh=hh;
+    }
     return 1;
 }
 

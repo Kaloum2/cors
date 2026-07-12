@@ -31,8 +31,13 @@ extern int monitor_bsta_distr_str(const cors_monitor_bstas_info_t *bstas, const 
                 s->pos[1]*R2D,s->pos[2],s->itrf,s->type);
         strcat(buff,tmp);
     }
-    buff[strlen(buff)-1]='}';
-    strcat(buff,"\n");
+    if (buff[0]=='{'&&buff[1]=='\0') {
+        strcat(buff,"}\n");
+    }
+    else {
+        buff[strlen(buff)-1]='}';
+        strcat(buff,"\n");
+    }
     monitor_free_bstas_info(&bstas_p);
     return strlen(buff);
 }

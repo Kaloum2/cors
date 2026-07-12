@@ -25,6 +25,8 @@ EXPORT opt_t cors_opts[]={
         {"rtk-conf-file",          2,(void *)&cors_opt_.rtk_conf_file,     ""},
         {"pnt-conf-file",          2,(void *)&cors_opt_.pnt_conf_file,     ""},
         {"agent-user-file",        2,(void *)&cors_opt_.agent_user_file,   ""},
+        {"mountpoints-file",       2,(void *)&cors_opt_.mountpoints_file,  ""},
+        {"corr-conf-file",         2,(void *)&cors_opt_.corr_conf_file,    ""},
         {"monitor-port",           0,(void *)&cors_opt_.monitor_port,      ""},
         {"",0,NULL,""}
 };
@@ -322,6 +324,8 @@ static void reset_corsopts()
     cors_opt_.trace_file[0]='\0';
     cors_opt_.baselines_file[0]='\0';
     cors_opt_.bstas_info_file[0]='\0';
+    strcpy(cors_opt_.mountpoints_file,"conf/mountpoints");
+    strcpy(cors_opt_.corr_conf_file,"conf/corr.conf");
     cors_opt_.monitor_port=0;
 }
 /* load options ----------------------------------------------------------------

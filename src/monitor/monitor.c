@@ -103,25 +103,37 @@ static void monitor_corr_cmd(uv_stream_t *str, char *buf)
 static void on_read_cb(uv_stream_t *str, ssize_t nr, const uv_buf_t *buf)
 {
     cors_monitord_t *md=str->data;
+    char *msg;
+    char *p;
 
     if (nr<0) {
         cors_monitor_del(md->monitor,md);
         free(buf->base);
         return;
     }
-    buf->base[nr]='\0';
-    char *p;
+    if (nr==0||!buf->base) {
+        free(buf->base);
+        return;
+    }
+    msg=malloc((size_t)nr+1);
+    if (!msg) {
+        free(buf->base);
+        return;
+    }
+    memcpy(msg,buf->base,(size_t)nr);
+    msg[nr]='\0';
+    free(buf->base);
 
-    if ((p=strrstr(buf->base,MONITOR_CMD_SOURCE))) {
+    if ((p=strrstr(msg,MONITOR_CMD_SOURCE))) {
         monitor_src_updconn(str,p);
     }
-    else if ((p=strrstr(buf->base,MONITOR_CMD_BSTA_DISTR))) {
+    else if ((p=strrstr(msg,MONITOR_CMD_BSTA_DISTR))) {
         monitor_bsta_distr(str,p);
     }
-    else if ((p=strrstr(buf->base,MONITOR_CMD_CORR))) {
-        monitor_corr_cmd(str,buf->base);
+    else if ((p=strrstr(msg,MONITOR_CMD_CORR))) {
+        monitor_corr_cmd(str,msg);
     }
-    free(buf->base);
+    free(msg);
 }
 
 static void on_add_monitor(uv_async_t *handle)

@@ -18,15 +18,16 @@ typedef struct moni_bsta_distr_task {
     QUEUE q;
 } moni_bsta_distr_task_t;
 
-static void do_parse_argv(char *buf, char **argv)
+static int do_parse_argv(char *buf, char **argv, int maxargc)
 {
     char *p=strtok(buf," \t\r\n");
     int argc=0;
 
-    while (p!=NULL&&argc<16) {
+    while (p!=NULL&&argc<maxargc) {
         argv[argc++]=p;
         p=strtok(NULL," \t\r\n");
     }
+    return argc;
 }
 
 static void on_rsp_cb(uv_write_t* req, int status)
@@ -44,12 +45,12 @@ static int do_monitor_bsta_distr_work(moni_bsta_distr_task_t *data)
     int nmax=HASH_COUNT(cors->monitor.moni_bstas_info.data);
     int ret,len;
 
-    if (nmax<=0) return 0;
+    char *buff=malloc((nmax>0?nmax:1)*1024*sizeof(char));
+    if (!buff) return -1;
 
-    char *buff=malloc(nmax*1024*sizeof(char));
-    if ((len=monitor_bsta_distr_str(&cors->monitor.moni_bstas_info,data->province,data->type,buff))<=0) {
-        free(buff);
-        return 0;
+    if (nmax<=0||(len=monitor_bsta_distr_str(&cors->monitor.moni_bstas_info,data->province,data->type,buff))<=0) {
+        strcpy(buff,"{}\n");
+        len=(int)strlen(buff);
     }
     if (uv_is_closing((uv_handle_t*)md->conn)) {
         free(buff);
@@ -91,6 +92,7 @@ extern void monitor_bsta_distr_moni(uv_async_t *handle)
         if (do_monitor_bsta_distr_work(data)<0) {
             cors_monitor_del(data->md->monitor,data->md);
         }
+        free(data);
     }
 }
 
@@ -106,13 +108,29 @@ static moni_bsta_distr_task_t* new_moni_bsta_distr_task(const char *province, in
 
 extern void monitor_bsta_distr(uv_stream_t *str, char *buff)
 {
-    char *argv[16],province[32],type=0;
-    do_parse_argv(buff,argv);
+    char *argv[16];
+    char province[32]="all";
+    char type=2;
+    int n;
 
-    strcpy(province,argv[2]);
-    if (strcmp(argv[3],"physics-station")==0) type=0;
-    if (strcmp(argv[3],"virtual-station")==0) type=1;
-    if (strcmp(argv[3],"all")==0) type=2;
+    memset(argv,0,sizeof(argv));
+    n=do_parse_argv(buff,argv,16);
+
+    if (n==2&&argv[1]&&!strcmp(argv[1],"all")) {
+        /* MONITOR-BSTADISTR all */
+        strcpy(province,"all");
+        type=2;
+    }
+    else if (n>=4&&argv[2]&&argv[3]) {
+        strncpy(province,argv[2],sizeof(province)-1);
+        province[sizeof(province)-1]='\0';
+        if (!strcmp(argv[3],"physics-station")) type=0;
+        else if (!strcmp(argv[3],"virtual-station")) type=1;
+        else if (!strcmp(argv[3],"all")) type=2;
+    }
+    else {
+        return;
+    }
 
     cors_monitord_t *md=str->data;
     cors_monitor_t *monitor=md->monitor;

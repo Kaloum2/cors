@@ -339,6 +339,8 @@ typedef struct cors_opt {
     char rtk_conf_file[MAXSTRPATH];
     char pnt_conf_file[MAXSTRPATH];
     char agent_user_file[MAXSTRPATH];
+    char mountpoints_file[MAXSTRPATH];
+    char corr_conf_file[MAXSTRPATH];
 } cors_opt_t;
 
 typedef struct cors_ssat {

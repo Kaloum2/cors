@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import pty
+import re
 import select
 import signal
 import socket
@@ -21,11 +22,26 @@ import time
 from typing import Optional
 
 from cli_validation import END_MARKER, PROMPT, validate_cli_line
+from engine_process import disable_pty_echo, terminate_process_group
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 7998
 ENGINE_TIMEOUT_SEC = 30.0
 READ_CHUNK = 4096
+
+
+def _clean_engine_output(cmd: str, resp: str) -> str:
+    """Drop VT100/local echo (char + BS) and the command line itself."""
+    prev = None
+    while prev != resp:
+        prev = resp
+        resp = re.sub(r".\x08", "", resp)
+    resp = resp.replace(PROMPT, "")
+    resp = re.sub(r"(?m)^cors-engine>\s*", "", resp)
+    cmd = cmd.strip()
+    if cmd and resp.lstrip().startswith(cmd):
+        resp = resp.lstrip()[len(cmd) :]
+    return resp.lstrip("\r\n")
 
 
 class EngineSession:
@@ -43,14 +59,17 @@ class EngineSession:
 
     def start(self) -> None:
         master, slave = pty.openpty()
-        cmd = [self.engine, "-o", self.config, "-t", str(self.trace), "-s"]
+        disable_pty_echo(slave)
+        slave_name = os.ttyname(slave)
+        cmd = [
+            self.engine, "-o", self.config, "-t", str(self.trace),
+            "-s", "-d", slave_name,
+        ]
         self._proc = subprocess.Popen(
             cmd,
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
             cwd=self.workdir,
             close_fds=True,
+            preexec_fn=os.setsid,
         )
         os.close(slave)
         self._master_fd = master
@@ -58,19 +77,22 @@ class EngineSession:
 
     def stop(self) -> None:
         with self._lock:
-            if self._proc and self._proc.poll() is None:
-                try:
-                    self._write_unlocked("stop\n")
-                    self._drain_until_prompt(5.0)
-                except Exception:
-                    pass
-                self._proc.terminate()
-                try:
-                    self._proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self._proc.kill()
+            proc = self._proc
+
+            def graceful() -> None:
+                if self._master_fd is not None and proc and proc.poll() is None:
+                    try:
+                        self._write_unlocked("shutdown\r")
+                        self._drain_until_prompt(5.0)
+                    except Exception:
+                        pass
+
+            terminate_process_group(proc, graceful=graceful)
             if self._master_fd is not None:
-                os.close(self._master_fd)
+                try:
+                    os.close(self._master_fd)
+                except OSError:
+                    pass
                 self._master_fd = None
             self._proc = None
             self._buf = ""
@@ -119,8 +141,8 @@ class EngineSession:
             validate_cli_line(line)
             if self._proc is None or self._proc.poll() is not None:
                 self.start()
-            self._write_unlocked(line.strip() + "\n")
-            return self._drain_until_prompt(ENGINE_TIMEOUT_SEC)
+            self._write_unlocked(line.strip() + "\r")
+            return _clean_engine_output(line, self._drain_until_prompt(ENGINE_TIMEOUT_SEC))
 
 
 class SidecarServer:
@@ -201,6 +223,7 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGHUP, on_signal)
 
     try:
         server.serve_forever()

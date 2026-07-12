@@ -534,6 +534,8 @@ static void vrs_blsol_vsta(cors_vrs_t *vrs, const cors_vrs_sta_t *vsta)
     cors_srtk_t *srtk=&vrs->cors->srtk;
     int i;
 
+    if (!vsta||!vsta->trig) return;
+
     for (i=0;i<3;i++) {
         if (!(vt=vsta->trig->vt[i])) continue;
         cors_srtk_add_baseline(srtk,vt->srcid,vsta->srcid);

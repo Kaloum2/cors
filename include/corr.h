@@ -263,10 +263,9 @@ EXPORT int  cors_corr_sourcetable_build(const cors_corr_ctx_t *ctx,
 
 /**
  * @brief Initialise registre mountpoints, policy et supervision.
- * @param mountpoints_file Chemin conf/mountpoints ; NULL = défaut builtin.
+ * Chemins lus depuis cors->opt (mountpoints-file, corr-conf-file).
  */
-EXPORT int  cors_corr_init(cors_t *cors, cors_ntrip_agent_t *agent,
-                           const char *mountpoints_file);
+EXPORT int  cors_corr_init(cors_t *cors, cors_ntrip_agent_t *agent);
 
 /** @brief Arrête sessions actives et libère registre (shutdown propre). */
 EXPORT void cors_corr_close(void);
