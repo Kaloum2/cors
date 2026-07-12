@@ -29,8 +29,9 @@ doc/PLAN_ACTIONS.md
 doc/FONCTIONNALITES.md
 doc/tests_validation.md
 
-# Private field-test configs (real caster / network names)
-conf/validation/*REDACTED*
+# Private field-test configs (real caster / network names, lab credentials)
+conf/validation/*centipede*
+conf/validation/agentusers-lab
 
 # E2E tests and local scan configs (may contain private caster URLs)
 test/e2e/

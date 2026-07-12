@@ -148,7 +148,7 @@ Voir [SECURITY.md](SECURITY.md).
 | Version | Changement |
 |---------|------------|
 | v1 (actuel) | BSTADISTR, MONITOR-SOURCE, MONITOR-CORR |
-| v1.1 (2026-07) | Contrat figé INT-01 ; formats CLI fallback documentés dans tests_validation.md |
+| v1.1 (2026-07) | Contrat figé INT-01 ; formats CLI fallback documentés (lab local) |
 | v2 (proposé) | Champ `schema_version`, export triangles JSON |
 
 Proposition : [DECISIONS.md](DECISIONS.md) PROP-01.
