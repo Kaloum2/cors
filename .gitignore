@@ -1,6 +1,7 @@
 # CMake / build
 build/
 build01/
+build-ci-test/
 cmake-build-*/
 out/
 Testing/
@@ -28,10 +29,23 @@ doc/MENGINE.md
 doc/PLAN_ACTIONS.md
 doc/FONCTIONNALITES.md
 doc/tests_validation.md
+doc/ARCHITECTURE.md
+doc/CAHIER_DES_CHARGES.md
+doc/DECISIONS.md
+doc/README.md
+doc/RTN_PLATFORM.md
+doc/RUNBOOK.md
+doc/SECURITY.md
+doc/TESTING.md
+doc/user_doc.md
 
 # Private field-test configs (real caster / network names, lab credentials)
 conf/validation/*centipede*
 conf/validation/agentusers-lab
+
+# Local-only private copies/backups (do not commit)
+cors-private-local/
+cors-backup-pre-scrub-*.git/
 
 # E2E tests and local scan configs (may contain private caster URLs)
 test/e2e/
@@ -61,6 +75,7 @@ __pycache__/
 # Runtime artifacts (cors-engine)
 # Traces / captures (may contain credentials or RTCM payloads)
 *.raw
+*.trace
 
 *.shm*
 *.idmaptbl
@@ -77,6 +92,7 @@ core.*
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 *~
