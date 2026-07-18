@@ -73,6 +73,7 @@ static void set_thread_rt_priority()
 static void nrtk_del_baseline(cors_nrtk_t *nrtk, int base_srcid, int rover_srcid)
 {
     cors_srtk_t *s,*t;
+    /* cors->srtk is hashed into nrtk->srtk (see start_cors); do not delete twice. */
     HASH_ITER(hh,nrtk->srtk,s,t) {
         cors_srtk_del_baseline(s,base_srcid,rover_srcid);
     }
@@ -96,25 +97,26 @@ static void nrtk_add_baseline(cors_nrtk_t *nrtk, int base_srcid, int rover_srcid
 {
     cors_srtk_t *s,*t,*p=NULL;
 
-    HASH_ITER(hh,nrtk->srtk,s,t) {
-        if (HASH_COUNT(s->bls.data)>=NTRK_MAX_BLS) continue;
-        p=s;
-        break;
+    /* Prefer main cors->srtk so FKP/MAC/VRS and showbls see the same store. */
+    if (nrtk->cors&&nrtk->cors->srtk.state&&
+        HASH_COUNT(nrtk->cors->srtk.bls.data)<NTRK_MAX_BLS) {
+        p=&nrtk->cors->srtk;
     }
     if (!p) {
-        if (nrtk->cors && nrtk->cors->srtk.state) {
-            p = &nrtk->cors->srtk;
-        }
-        else if (!(p = new_srtk(nrtk))) {
-            return;
+        HASH_ITER(hh,nrtk->srtk,s,t) {
+            if (HASH_COUNT(s->bls.data)>=NTRK_MAX_BLS) continue;
+            p=s;
+            break;
         }
     }
+    if (!p&&!(p=new_srtk(nrtk))) return;
     cors_srtk_add_baseline(p,base_srcid,rover_srcid);
 }
 
 static void nrtk_upd_bls(cors_nrtk_t *nrtk, cors_dtrig_edge_t **edge_add, cors_dtrig_edge_t **edge_del)
 {
     cors_dtrig_edge_t *e,*t;
+    int a,b;
 
     HASH_ITER(hh,*edge_add,e,t) {
         nrtk_add_baseline(nrtk,e->vt[0]->srcid,e->vt[1]->srcid);
@@ -126,34 +128,22 @@ static void nrtk_upd_bls(cors_nrtk_t *nrtk, cors_dtrig_edge_t **edge_add, cors_d
         HASH_DEL(*edge_del,e);
         free(e);
     }
+    /* Re-queue any live mesh edge that lost its srtk baseline (async add/del races). */
+    HASH_ITER(hh,nrtk->dtrig_net.edges,e,t) {
+        if (!e->vt[0]||!e->vt[1]) continue;
+        a=e->vt[0]->srcid;
+        b=e->vt[1]->srcid;
+        if (a>b) continue;
+        nrtk_add_baseline(nrtk,a,b);
+    }
 }
 
 static int nrtk_init_dtrignet(cors_nrtk_t *nrtk)
 {
-    cors_t *cors=nrtk->cors;
-    cors_ntrip_source_info_t *info_tbl=cors->ntrip.info_tbl[1],*info,*t;
-    cors_dtrig_net_t *dtg=&nrtk->dtrig_net;
-    cors_dtrig_edge_t **edge,*e,*et;
-    int i=-1;
-
+    /* Mesh stays empty until each source delivers a first obs epoch
+     * (cors_nrtk_add_source from the RTCM decoder). */
     cors_dtrignet_init(&nrtk->dtrig_net);
-
-    if (HASH_CNT(ii,info_tbl)<=0) {
-        return 0;
-    }
-
-    HASH_ITER(ii,info_tbl,info,t) {
-        cors_dtrignet_add_vertex(dtg,info->pos,info->ID,NULL,NULL);
-    }
-    cors_srtk_t *srtk;
-    HASH_ITER(hh,dtg->edges,e,et) {
-        if (i<0||i++>=NTRK_MAX_BLS) {
-            srtk=new_srtk(nrtk);
-            i=0;
-        }
-        cors_srtk_add_baseline(srtk,e->vt[0]->srcid,e->vt[1]->srcid);
-    }
-    return HASH_COUNT(dtg->edges);
+    return 0;
 }
 
 static void nrtk_add_source(cors_nrtk_t *nrtk, nrtk_add_source_t *data)

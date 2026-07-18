@@ -66,6 +66,7 @@ typedef struct cors_ntrip_source_info {
     char mntpnt[32];
     int port,ID,type;
     double pos[3];
+    int nrtk_meshed; /* 1 after first obs inserted this source into dtrig_net */
     cors_ntrip_source_t *src;
     UT_hash_handle hh;
     UT_hash_handle ii;
@@ -354,10 +355,18 @@ typedef struct cors_ssats {
     cors_ssat_t *data;
 } cors_ssats_t;
 
+typedef enum cors_amb_status {
+    CORS_AMB_UNKNOWN = 0,
+    CORS_AMB_FIXED,
+    CORS_AMB_FLOAT,
+    CORS_AMB_DEGRADED
+} cors_amb_status_t;
+
 typedef struct cors_blsol {
     int base_srcid,rover_srcid;
     char id[16];
     rtk_t rtk;
+    cors_amb_status_t amb_status;
     UT_hash_handle hh;
 } cors_blsol_t;
 
@@ -567,6 +576,8 @@ EXPORT int cors_start(cors_t* cors, const cors_opt_t *opt);
 EXPORT void cors_updssat(cors_ssats_t *ssats, ssat_t *ssat, int srcid, int upd_flag, gtime_t time);
 EXPORT void cors_updsta(cors_stas_t *stas, const sta_t *sta, int srcid);
 EXPORT void cors_updblsol(cors_blsols_t *blsols, cors_baseline_t *bl, const rtk_t *rtk, int base_srcid, int rover_srcid);
+EXPORT cors_amb_status_t cors_amb_status_from_solq(int solq);
+EXPORT const char *cors_amb_status_str(cors_amb_status_t status);
 EXPORT void cors_freenav(cors_nav_t *nav);
 EXPORT void cors_freeobs(cors_obs_t *obs);
 EXPORT void cors_freessat(cors_ssats_t *ssat);

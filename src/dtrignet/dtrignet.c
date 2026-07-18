@@ -393,6 +393,9 @@ extern void cors_dtrignet_upd_edge(cors_dtrig_net_t *dtrig_net, cors_baseline_t 
     sprintf(id,"%d->%d",base_srcid,rover_srcid);
     HASH_FIND_STR(dtrig_net->edges,id,e);
     if (e) e->bl=bl;
+    sprintf(id,"%d->%d",rover_srcid,base_srcid);
+    HASH_FIND_STR(dtrig_net->edges,id,e);
+    if (e) e->bl=bl;
 }
 
 extern void cors_dtrignet_add_edge(cors_dtrig_net_t *dtrig_net, int srcid1, int srcid2)

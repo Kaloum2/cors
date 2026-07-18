@@ -149,10 +149,10 @@ static void cmd_add_source(char **args, int narg, vt_t *vt)
         sta_t sta={0};
         matcpy(sta.pos,srcpos,1,3);
         cors_updsta(&cors.stas,&sta,ret);
-        cors_nrtk_add_source(&cors.nrtk,ret,srcpos);
+        /* NRTK mesh deferred until first decoded obs (see decoder.c). */
     }
     else {
-        vt_printf(vt,"addsource: warning: no coordinates given, NRTK triangulation skipped for '%s'\n",args[1]);
+        vt_printf(vt,"addsource: warning: no coordinates given, NRTK triangulation deferred until obs+pos for '%s'\n",args[1]);
     }
     vt_printf(vt,"\n");
 }
@@ -827,10 +827,12 @@ static int export_dtrig_json(const char *json_path, vt_t *vt)
 {
     cors_dtrig_vertex_t *v,*vt_iter;
     cors_dtrig_t *d,*dt;
+    cors_dtrig_edge_t *e;
     cors_ntrip_source_info_t *info;
+    const char *amb;
     double pos_llh[3];
     FILE *fp;
-    int first_sta=1,first_tri=1;
+    int first_sta=1,first_tri=1,i;
 
     if (HASH_COUNT(cors.nrtk.dtrig_net.vertexs)<=0) {
         vt_printf(vt,"plotdtrigs: no mesh vertices (add sources with coordinates)\n");
@@ -859,8 +861,18 @@ static int export_dtrig_json(const char *json_path, vt_t *vt)
         first_tri=0;
         fprintf(fp,"{\"id\":");
         json_escape_str(fp,d->id);
-        fprintf(fp,",\"vertices\":[%d,%d,%d]}",
+        fprintf(fp,",\"vertices\":[%d,%d,%d],\"edges\":[",
                 d->vt[0]->srcid,d->vt[1]->srcid,d->vt[2]->srcid);
+        for (i=0;i<3;i++) {
+            e=d->edge[i];
+            amb=e&&e->bl&&e->bl->sol? cors_amb_status_str(e->bl->sol->amb_status):"unknown";
+            if (i>0) fputc(',',fp);
+            fprintf(fp,"{\"stations\":[%d,%d],\"ambiguity_status\":",
+                    e? e->vt[0]->srcid:0,e? e->vt[1]->srcid:0);
+            json_escape_str(fp,amb);
+            fputc('}',fp);
+        }
+        fprintf(fp,"]}");
     }
     fprintf(fp,"]}");
     fclose(fp);

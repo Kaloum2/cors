@@ -247,6 +247,7 @@ extern void cors_updobs(cors_obs_t *cors_obs, const obsd_t *obsd, int n, int src
     int i;
 
     if (n<=0) return;
+    if (n>MAXOBS) n=MAXOBS;
 
     cors_obsd_t *s;
     HASH_FIND_INT(cors_obs->data,&srcid,s);
@@ -385,9 +386,8 @@ extern void cors_add_source(cors_t *cors, const char *name, const char *addr, in
     matcpy(info->pos,pos,1,3);
 
     ret=cors_ntrip_add_source(&cors->ntrip,info);
-    if (ret>0) {
-        cors_nrtk_add_source(&cors->nrtk,ret,pos);
-    }
+    if (ret<=0) return;
+    /* NRTK mesh deferred until first decoded obs (see decoder.c). */
 }
 
 extern void cors_del_source(cors_t *cors, const char *name)
@@ -477,6 +477,23 @@ extern void cors_updblsol(cors_blsols_t *blsols, cors_baseline_t *bl, const rtk_
         return;
     }
     blsol->rtk=*rtk;
+    blsol->amb_status=cors_amb_status_from_solq(rtk->sol.stat);
+}
+
+extern cors_amb_status_t cors_amb_status_from_solq(int solq)
+{
+    switch (solq) {
+        case SOLQ_FIX:   return CORS_AMB_FIXED;
+        case SOLQ_FLOAT: return CORS_AMB_FLOAT;
+        case SOLQ_NONE:  return CORS_AMB_UNKNOWN;
+        default:         return CORS_AMB_DEGRADED; /* SBAS/DGPS/SINGLE/PPP */
+    }
+}
+
+extern const char *cors_amb_status_str(cors_amb_status_t status)
+{
+    static const char *s[]={"unknown","fixed","float","degraded"};
+    return s[status];
 }
 
 extern void cors_freeblsol(cors_blsols_t *blsols)
