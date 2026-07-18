@@ -37,7 +37,7 @@ int main(int argc, const char *argv[])
         for (j=i+1;j<obs.n;j++) {
             if (timediff(obs.data[j].time,obs.data[i].time)>DTTOL) break;
         }
-        nb=rtcm_encode_obs(&rtcm,obs_type,5,&nav,obs.data+i,j-i,buff);
+        nb=rtcm_encode_obs(&rtcm,obs_type,5,&nav,obs.data+i,j-i,buff,(int)sizeof(buff));
         if (nb) {
             fwrite(buff,nb,1,fp_rtcm);
             fflush(fp_rtcm);

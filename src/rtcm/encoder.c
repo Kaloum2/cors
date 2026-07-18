@@ -147,11 +147,11 @@ static int test_sys(int sys)
     return -1;
 }
 
-extern int rtcm_encode_obs(rtcm_t *rtcm, const int *type, int nt, const nav_t *nav, obsd_t *obs, int n, char *buff)
+extern int rtcm_encode_obs(rtcm_t *rtcm, const int *type, int nt, const nav_t *nav, obsd_t *obs, int n, char *buff, int max_len)
 {
     int i,nb=0,j;
 
-    if (n<=0) return 0;
+    if (n<=0||!buff||max_len<=0) return 0;
     rtcm->time=obs[0].time;
     rtcm->obs.data=obs;
     rtcm->obs.n=n;
@@ -166,6 +166,11 @@ extern int rtcm_encode_obs(rtcm_t *rtcm, const int *type, int nt, const nav_t *n
         if (!is_obs(type[i])) continue;
         if (!gen_rtcm3(rtcm,type[i],0,i!=j)) continue;
         if (rtcm->nbyte) {
+            if (nb+rtcm->nbyte>max_len) {
+                log_trace(2,"rtcm_encode_obs: output truncated (%d+%d>%d)\n",
+                          nb,rtcm->nbyte,max_len);
+                return nb;
+            }
             memcpy(buff+nb,rtcm->buff,sizeof(char)*rtcm->nbyte);
             nb+=rtcm->nbyte;
         }

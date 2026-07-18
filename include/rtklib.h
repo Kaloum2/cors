@@ -1302,7 +1302,7 @@ EXPORT int rtcm_encode_nav(const int *type, const nav_t *nav, char *buff);
 EXPORT int rtcm_encode_sta(int type, const sta_t *sta, char *buff);
 EXPORT int rtcm_encode_geph(int type, const geph_t *geph, char *buff);
 EXPORT int rtcm_encode_eph(int type, const eph_t *eph, char *buff);
-EXPORT int rtcm_encode_obs(rtcm_t *rtcm, const int *type, int nt, const nav_t *nav, obsd_t *obs, int n, char *buff);
+EXPORT int rtcm_encode_obs(rtcm_t *rtcm, const int *type, int nt, const nav_t *nav, obsd_t *obs, int n, char *buff, int max_len);
 
 EXPORT void rtcm_set_fkp_payload(const rtcm_fkp_sat_t *sat, int ns);
 EXPORT int rtcm_encode_fkp(int type, int staid, const rtcm_fkp_sat_t *sat, int ns, char *buff);
