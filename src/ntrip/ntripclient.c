@@ -325,14 +325,16 @@ static void on_fs_close(uv_fs_t *req)
 
 extern int cors_ntripcli_close(cors_ntrip_client_t *cli)
 {
-    if (!uv_is_closing((uv_handle_t*)cli->timer_send_gga)) {
+    if (!cli) return 0;
+    if (cli->timer_send_gga&&!uv_is_closing((uv_handle_t*)cli->timer_send_gga)) {
         uv_close((uv_handle_t*)cli->timer_send_gga,on_close_cb);
     }
-    if (!uv_is_closing((uv_handle_t*)cli->tcp)) {
+    if (cli->tcp&&!uv_is_closing((uv_handle_t*)cli->tcp)) {
         uv_close((uv_handle_t*)cli->tcp,on_close_cb);
     }
-    if (cli->raw) {
+    if (cli->raw&&cli->tcp) {
         uv_fs_t *req=calloc(1,sizeof(uv_fs_t));
         uv_fs_close(cli->tcp->loop,req,cli->raw,on_fs_close);
     }
+    return 1;
 }

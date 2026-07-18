@@ -155,7 +155,7 @@ typedef struct ntrip_add_source {
 
 typedef struct ntrip_del_source {
     cors_ntrip_caster_t *ctr;
-    char name[8];
+    char name[64];
     QUEUE q;
 } ntrip_del_source_t;
 
@@ -215,18 +215,22 @@ static void do_del_source(ntrip_del_source_t *data)
 {
     cors_ntrip_caster_t *ctr=data->ctr;
     cors_ntrip_source_t *s;
-    HASH_FIND_STR(ctr->src_tbl,data->name,s);
+    cors_ntrip_source_info_t *info,*i,*t;
+    cors_ntrip_t *ntrip=ctr->ntrip;
+    char name[64];
+
+    snprintf(name,sizeof(name),"%s",data->name);
+    HASH_FIND_STR(ctr->src_tbl,name,s);
     if (!s) {
         free(data); return;
     }
-    cors_ntripcli_close(&s->cli);
+    if (!s->type) {
+        cors_ntripcli_close(&s->cli);
+    }
     HASH_DEL(ctr->src_tbl,s);
-    free(s); free(data);
+    free(s);
 
-    cors_ntrip_source_info_t *info,*i,*t;
-    cors_ntrip_t *ntrip=ctr->ntrip;
-
-    HASH_FIND(hh,ntrip->info_tbl[0],data->name,strlen(data->name),info);
+    HASH_FIND(hh,ntrip->info_tbl[0],name,strlen(name),info);
     if (info) {
         cors_source_rinex_end(info->ID);
         HASH_DELETE(hh,ntrip->info_tbl[0],info);
@@ -237,6 +241,7 @@ static void do_del_source(ntrip_del_source_t *data)
     HASH_ITER(hh,ntrip->info_tbl[0],i,t) {
         kd_insert(ntrip->src_kdtree,i->pos,i);
     }
+    free(data);
 }
 
 static void on_del_source_cb(uv_async_t *handle)
@@ -261,7 +266,7 @@ extern int cors_ntrip_caster_del_source(cors_ntrip_caster_t *ctr, const char *na
     uv_mutex_lock(&ctr->del_lock);
     ntrip_del_source_t *data=calloc(1,sizeof(*data));
     data->ctr=ctr;
-    strcpy(data->name,name);
+    snprintf(data->name,sizeof(data->name),"%s",name);
 
     QUEUE_INSERT_TAIL(&ctr->del_src_queue,&data->q);
     uv_mutex_unlock(&ctr->del_lock);

@@ -106,7 +106,7 @@ static cors_bsta_trig_t* find_bsta_trig(const cors_vrs_t *vrs, cors_vrs_sta_t *s
 {
     cors_dtrig_net_t *dtrig_net=&vrs->nrtk->dtrig_net;
     cors_dtrig_t *d,*t,*m=NULL;
-    double md=-1E9,pc[3],dr[3];
+    double md=-1.0,pc[3],dr[3],dist;
     int i,j;
 
     HASH_ITER(hh,dtrig_net->dtrigs,d,t) {
@@ -115,24 +115,29 @@ static cors_bsta_trig_t* find_bsta_trig(const cors_vrs_t *vrs, cors_vrs_sta_t *s
         return d;
     }
     HASH_ITER(hh,dtrig_net->dtrigs,d,t) {
+        if (!d->vt[0]||!d->vt[1]||!d->vt[2]) continue;
         for (i=0;i<3;i++) {
             for (pc[i]=0.0,j=0;j<3;j++) pc[i]+=d->vt[j]->pos[i];
             pc[i]/=3.0;
         }
         for (i=0;i<3;i++) dr[i]=sta->pos[i]-pc[i];
-        if (md<0||norm(dr,3)<md) {
-            sta->in_dtrig=0; m=d;
+        dist=norm(dr,3);
+        if (m==NULL||dist<md) {
+            m=d;
+            md=dist;
         }
     }
+    sta->in_dtrig=0;
     return m;
 }
 
 static cors_master_sta_t* find_master_bsta(const cors_dtrig_t *dtrig, cors_vrs_sta_t *sta)
 {
-    if (norm(sta->pos,3)<=0.0) return NULL;
-    if (!dtrig) return NULL;
-    int i,j,k;
+    cors_vrs_sta_q_t *vq;
     double dr[3],d=-1.0;
+    int i,j,k;
+
+    if (norm(sta->pos,3)<=0.0||!dtrig) return NULL;
 
     for (k=-1,i=0;i<3;i++) {
         for (j=0;j<3;j++) dr[j]=sta->pos[j]-dtrig->vt[i]->pos[j];
@@ -142,13 +147,11 @@ static cors_master_sta_t* find_master_bsta(const cors_dtrig_t *dtrig, cors_vrs_s
     }
     if (k<0) return NULL;
 
-    cors_master_sta_t *msta=dtrig->vt[k];
-    cors_vrs_sta_q_t *vq;
-    HASH_FIND_PTR(msta->vsta_list,&sta,vq);
+    HASH_FIND_PTR(dtrig->vt[k]->vsta_list,&sta,vq);
     if (!vq) {
         vq=calloc(1,sizeof(*vq));
         vq->vsta=sta;
-        HASH_ADD_PTR(msta->vsta_list,vsta,vq);
+        HASH_ADD_PTR(dtrig->vt[k]->vsta_list,vsta,vq);
     }
     return dtrig->vt[k];
 }
@@ -279,7 +282,7 @@ static int generate_vrs_obs(cors_vrs_t *vrs, cors_vrs_sta_t *vsta, const cors_ma
 
     vsta->obs.n=0;
 
-    for (i=0;i<mobs->n;i++) {
+    for (i=0;i<mobs->n&&vsta->obs.n<MAXOBS;i++) {
         if (generate_vrs_obs_satf(vrs,vsta,msta,rtk,n,&mobs->data[i],dire,
                 &vsta->obs.data[vsta->obs.n])<=0) continue;
         vsta->obs.n++;
@@ -361,8 +364,8 @@ static int vrs_upd_dtrig(cors_vrs_t *vrs, cors_vrs_sta_t *vsta, const cors_maste
     int i,j,k,m=0,dire[64]={0};
 
 #if VRS_NEAREST_BL
-    if (!(rtkp=vrs_near_bl(msta,vsta,rtk,n, 1))) rtks[m++]=rtkp;
-    if (!(rtkp=vrs_near_bl(msta,vsta,rtk,n,-1))) rtks[m++]=rtkp;
+    if ((rtkp=vrs_near_bl(msta,vsta,rtk,n, 1))) rtks[m++]=rtkp;
+    if ((rtkp=vrs_near_bl(msta,vsta,rtk,n,-1))) rtks[m++]=rtkp;
 #else
     for (j=-1,i=0;i<3;i++) {
         if (msta==vsta->trig->vt[i]) {j=i; break;}
@@ -374,15 +377,16 @@ static int vrs_upd_dtrig(cors_vrs_t *vrs, cors_vrs_sta_t *vsta, const cors_maste
         k=0;
         HASH_ITER(hh,msta->edge_list,q,t) {
             if (q->edge!=e) {k++; continue;}
+            if (!q->edge->bl||!rtk[k]) {k++; break;}
             if (strcmp(q->edge->id,q->edge->bl->id)) dire[m]=-1;
             else dire[m]=1;
-            rtks[m++]=rtk[k++]; break;
+            rtks[m++]=rtk[k]; break;
         }
     }
     if (m<2) {
         m=0;
-        if (!(rtkp=vrs_near_bl(msta,vsta,rtk,n, 1))) rtks[m++]=rtkp;
-        if (!(rtkp=vrs_near_bl(msta,vsta,rtk,n,-1))) rtks[m++]=rtkp;
+        if ((rtkp=vrs_near_bl(msta,vsta,rtk,n, 1))) rtks[m++]=rtkp;
+        if ((rtkp=vrs_near_bl(msta,vsta,rtk,n,-1))) rtks[m++]=rtkp;
     }
 #endif
     if (m<=0) return -1;
@@ -463,7 +467,7 @@ int cors_vrs_encode_obs_rtcm(cors_vrs_sta_t *vsta, const nav_t *nav, char *buff,
 #endif
 
     if (!vsta||!nav||!buff||max_len<=0||vsta->obs.n<=0) return 0;
-    return rtcm_encode_obs(&vsta->rtcm,type,5,nav,vsta->obs.data,vsta->obs.n,buff);
+    return rtcm_encode_obs(&vsta->rtcm,type,5,nav,vsta->obs.data,vsta->obs.n,buff,max_len);
 }
 
 static void out_vrs_obsrtcm(cors_vrs_t *vrs, cors_vrs_sta_t *vsta)
@@ -502,15 +506,35 @@ const cors_dtrig_t *cors_vrs_dtrig_at_pos(const cors_vrs_t *vrs, const double *p
 
 static void do_upd_vrs_work(upd_vrs_task_t *task)
 {
-    upd_vrs_obs(task->vrs,task->vsta,&task->msta,&task->mobs,task->dire,task->rtk,task->n);
+    cors_vrs_t *vrs=task->vrs;
+    cors_vrs_sta_t *live=NULL;
+    char name[64];
+    char buff[MAXOBS*256];
+    int nb=0;
+    nav_t *nav;
 
+    /* Caller holds upd_vrs_lock across dequeue + live check + obs update. */
+    HASH_FIND_STR(vrs->stas.data,task->vsta->name,live);
+    if (!live||live!=task->vsta) {
+        uv_mutex_unlock(&vrs->upd_vrs_lock);
+        freeobs(&task->mobs);
+        free(task->rtk); free(task->dire); free(task);
+        return;
+    }
+    upd_vrs_obs(vrs,task->vsta,&task->msta,&task->mobs,task->dire,task->rtk,task->n);
 #if VRS_OUT_OBSRNX
-    out_vrs_obsrnx(task->vrs,task->vsta);
+    out_vrs_obsrnx(vrs,task->vsta);
 #endif
-    out_vrs_obsrtcm(task->vrs,task->vsta);
+    nav=&vrs->cors->nav.data;
+    nb=cors_vrs_encode_obs_rtcm(task->vsta,nav,buff,sizeof(buff));
+    snprintf(name,sizeof(name),"%s",task->vsta->name);
+    uv_mutex_unlock(&vrs->upd_vrs_lock);
 
+    if (nb>0) {
+        cors_ntrip_agent_send(&vrs->cors->agent,name,buff,nb,nav);
+    }
     freeobs(&task->mobs);
-    free(task->rtk); free(task);
+    free(task->rtk); free(task->dire); free(task);
 }
 
 static void upd_vrs_process(uv_async_t* handle)
@@ -523,7 +547,7 @@ static void upd_vrs_process(uv_async_t* handle)
         QUEUE *q=QUEUE_HEAD(&vrs->upd_vrs_queue);
         upd_vrs_task_t *task=QUEUE_DATA(q,upd_vrs_task_t,q);
         QUEUE_REMOVE(q);
-        uv_mutex_unlock(&vrs->upd_vrs_lock);
+        /* Keep lock until do_upd_vrs_work finishes or drops the task. */
         do_upd_vrs_work(task);
     }
 }
@@ -630,12 +654,19 @@ extern int vrs_add_vsta(cors_vrs_t *vrs, const char *name, const double *pos)
     cors_vrs_sta_t *sta;
     cors_t *cors=vrs->cors;
 
+    uv_mutex_lock(&vrs->upd_vrs_lock);
     HASH_FIND_STR(vrs->stas.data,name,sta);
-    if (sta) return 0;
-    if (norm(pos,3)<=0) return 0;
+    if (sta) {
+        uv_mutex_unlock(&vrs->upd_vrs_lock);
+        return 0;
+    }
+    if (norm(pos,3)<=0) {
+        uv_mutex_unlock(&vrs->upd_vrs_lock);
+        return 0;
+    }
 
     sta=calloc(1,sizeof(cors_vrs_sta_t));
-    strcpy(sta->name,name);
+    snprintf(sta->name,sizeof(sta->name),"%s",name);
     matcpy(sta->pos,pos,1,3);
     sta->srcid=generate_vsta_id();
     sta->obs.data=calloc(MAXOBS,sizeof(obsd_t));
@@ -647,9 +678,11 @@ extern int vrs_add_vsta(cors_vrs_t *vrs, const char *name, const double *pos)
 #if VRS_BLSOL_VSTA
     vrs_blsol_vsta(vrs,sta);
 #endif
+    uv_mutex_unlock(&vrs->upd_vrs_lock);
+
     info=calloc(1,sizeof(cors_ntrip_source_info_t));
     info->type=1;
-    strcpy(info->name,sta->name);
+    snprintf(info->name,sizeof(info->name),"%s",sta->name);
     matcpy(info->pos,sta->pos,1,3);
     cors_ntrip_add_source(&cors->ntrip,info);
     return 1;
@@ -660,28 +693,56 @@ extern int vrs_del_vsta(cors_vrs_t *vrs, const char *name)
     cors_t *cors=vrs->cors;
     cors_vrs_sta_q_t *vq;
     cors_vrs_sta_t *vsta;
+    QUEUE *q,*next;
+    upd_vrs_task_t *task;
+    char name_copy[64];
 
+    uv_mutex_lock(&vrs->upd_vrs_lock);
     HASH_FIND_STR(vrs->stas.data,name,vsta);
-    if (!vsta) return 0;
+    if (!vsta) {
+        uv_mutex_unlock(&vrs->upd_vrs_lock);
+        return 0;
+    }
+    snprintf(name_copy,sizeof(name_copy),"%s",vsta->name);
+
+    /* Drop pending VRS update tasks that still point at this station. */
+    for (q=QUEUE_HEAD(&vrs->upd_vrs_queue);q!=&vrs->upd_vrs_queue;q=next) {
+        next=QUEUE_NEXT(q);
+        task=QUEUE_DATA(q,upd_vrs_task_t,q);
+        if (task->vsta!=vsta) continue;
+        QUEUE_REMOVE(q);
+        freeobs(&task->mobs);
+        free(task->rtk);
+        free(task->dire);
+        free(task);
+    }
 
 #if VRS_BLSOL_VSTA
-    cors_dtrig_vertex_t *vt;
-    cors_srtk_t *srtk=&vrs->cors->srtk;
-    int i;
+    {
+        cors_dtrig_vertex_t *vt;
+        cors_srtk_t *srtk=&vrs->cors->srtk;
+        int i;
 
-    for (i=0;i<3;i++) {
-        if (!(vt=vsta->trig->vt[i])) continue;
-        cors_srtk_del_baseline(srtk,vt->srcid,vsta->srcid);
+        if (vsta->trig) {
+            for (i=0;i<3;i++) {
+                if (!(vt=vsta->trig->vt[i])) continue;
+                cors_srtk_del_baseline(srtk,vt->srcid,vsta->srcid);
+            }
+        }
     }
 #endif
-    HASH_FIND_PTR(vsta->msta->vsta_list,&vsta,vq);
-    if (vq) {HASH_DEL(vsta->msta->vsta_list,vq); free(vq);}
+    if (vsta->msta) {
+        HASH_FIND_PTR(vsta->msta->vsta_list,&vsta,vq);
+        if (vq) {HASH_DEL(vsta->msta->vsta_list,vq); free(vq);}
+    }
     HASH_DEL(vrs->stas.data,vsta);
     freeobs(&vsta->obs);
     if (vsta->fp_rnx) fclose(vsta->fp_rnx);
+    free(vsta);
+    uv_mutex_unlock(&vrs->upd_vrs_lock);
 
-    cors_ntrip_del_source(&cors->ntrip,name);
-    free(vsta); return 1;
+    if (cors) cors_ntrip_del_source(&cors->ntrip,name_copy);
+    return 1;
 }
 
 extern void vrs_upd_vsta(cors_vrs_t *vrs)
