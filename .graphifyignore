@@ -1,0 +1,20 @@
+# Vendored / third-party (domine le graphe sinon)
+lib/
+
+# Build artefacts
+build/
+build01/
+bin/linux/
+bin/win/
+bin/postprc/
+
+# Traces et captures locales
+*.trace
+*.raw
+
+# Fichiers binaires / objets
+*.o
+*.a
+*.so
+*.dll
+*.exe
