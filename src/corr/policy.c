@@ -164,6 +164,7 @@ extern void cors_user_policy_init(cors_user_policy_t *policy)
     policy->allowed_modes=CORR_MODE_ALL;
     policy->region.type=CORS_REGION_NONE;
     policy->max_sessions=0;
+    policy->allow_float=0;
 }
 
 extern void cors_user_policy_free(cors_user_policy_t *policy)
@@ -273,11 +274,50 @@ static int split_csv_line(char *buff, char *val[], int max_val)
     return n;
 }
 
+static int field_is_max_sessions(const char *s)
+{
+    const char *p;
+
+    if (!s||!*s) return 0;
+    if (!strcmp(s,"*")) return 1;
+    for (p=s;*p;p++) {
+        if (!isdigit((unsigned char)*p)) return 0;
+    }
+    return 1;
+}
+
+/* Trailing agentusers token: allow_float | float | nofix | allow_float=0|1 */
+static int parse_allow_float_field(const char *s, int *out)
+{
+    if (!s||!*s||!out) return 0;
+    if (!strcasecmp(s,"allow_float")||!strcasecmp(s,"float")||
+        !strcasecmp(s,"nofix")) {
+        *out=1;
+        return 1;
+    }
+    if (!strncasecmp(s,"allow_float=",12)) {
+        *out=atoi(s+12)?1:0;
+        return 1;
+    }
+    return 0;
+}
+
+static void join_csv_fields(const char *val[], int from, int to, char *out, int out_sz)
+{
+    int i;
+
+    out[0]='\0';
+    for (i=from;i<=to;i++) {
+        if (i>from) strncat(out,",",out_sz-strlen(out)-1);
+        strncat(out,val[i],out_sz-strlen(out)-1);
+    }
+}
+
 extern int cors_policy_read_users(const char *path, cors_ntrip_user_t **user_tbl)
 {
-    char buff[4096],*val[8];
+    char buff[4096],region_buf[1024],*val[32];
     cors_ntrip_user_t *user;
-    int n;
+    int n,last,allow_float;
     FILE *fp;
 
     if (!path||!user_tbl) return 0;
@@ -285,10 +325,11 @@ extern int cors_policy_read_users(const char *path, cors_ntrip_user_t **user_tbl
 
     while (fgets(buff,sizeof(buff),fp)) {
         char *line=trim(buff);
+        const char *modes,*region,*max_sess;
 
         if (!*line||*line=='#') continue;
 
-        n=split_csv_line(line,val,8);
+        n=split_csv_line(line,val,32);
         if (n<2) continue;
 
         val[0]=trim(val[0]);
@@ -302,10 +343,32 @@ extern int cors_policy_read_users(const char *path, cors_ntrip_user_t **user_tbl
         strncpy(user->user,val[0],sizeof(user->user)-1);
         strncpy(user->passwd,val[1],sizeof(user->passwd)-1);
 
-        if (n>=3) {
-            const char *modes=trim(val[2]);
-            const char *region=n>=4?trim(val[3]):NULL;
-            const char *max_sess=n>=5?trim(val[4]):NULL;
+        allow_float=0;
+        last=n-1;
+        if (n>=4&&parse_allow_float_field(trim(val[last]),&allow_float)) {
+            last--;
+        }
+
+        if (last>=2) {
+            modes=trim(val[2]);
+            region="*";
+            max_sess=NULL;
+            if (last==2) {
+                /* modes only */
+            }
+            else if (last==3) {
+                if (field_is_max_sessions(val[3])) max_sess=trim(val[3]);
+                else region=trim(val[3]);
+            }
+            else if (field_is_max_sessions(val[last])) {
+                max_sess=trim(val[last]);
+                join_csv_fields((const char **)val,3,last-1,region_buf,sizeof(region_buf));
+                region=region_buf;
+            }
+            else {
+                region=trim(val[3]);
+                max_sess=last>=4?trim(val[4]):NULL;
+            }
 
             if (!cors_user_policy_parse(&user->policy,modes,region,max_sess)) {
                 log_trace(1,"policy: skip user %s (invalid policy fields)\n",val[0]);
@@ -317,6 +380,7 @@ extern int cors_policy_read_users(const char *path, cors_ntrip_user_t **user_tbl
         else {
             cors_user_policy_init(&user->policy);
         }
+        user->policy.allow_float=allow_float;
 
         HASH_ADD_STR(*user_tbl,user,user);
     }

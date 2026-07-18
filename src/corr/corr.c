@@ -38,6 +38,26 @@ cors_corr_sess_priv_t *corr_sess_priv(cors_corr_session_t *sess)
     return (cors_corr_sess_priv_t*)sess->priv;
 }
 
+int corr_sess_allow_float(cors_corr_session_t *sess)
+{
+    cors_corr_sess_priv_t *p=corr_sess_priv(sess);
+
+    return p?p->allow_float:0;
+}
+
+static void corr_sess_load_user_flags(cors_corr_session_t *sess)
+{
+    cors_corr_sess_priv_t *p;
+    cors_ntrip_user_t *u=NULL;
+
+    p=corr_sess_priv(sess);
+    if (!p) return;
+    p->allow_float=0;
+    if (!sess->conn||!sess->conn->user[0]||!g_corr_ctx.agent) return;
+    HASH_FIND_STR(g_corr_ctx.agent->user_tbl,sess->conn->user,u);
+    if (u) p->allow_float=u->policy.allow_float?1:0;
+}
+
 static const char *mode_names[]={
     "relay","near","vrs_fixed","vrs_dynamic","fkp","mac","imax","auto"
 };
@@ -78,7 +98,7 @@ extern int cors_corr_legacy_type_for_mode(cors_corr_mode_t mode)
         case CORS_CORR_NEAR: return CORS_CORR_LEGACY_TYPE_NEAR;
         case CORS_CORR_RELAY:
         case CORS_CORR_VRS_FIXED: return CORS_CORR_LEGACY_TYPE_RELAY;
-        default: return 3;
+        default: return CORS_CORR_LEGACY_TYPE_CORR;
     }
 }
 
@@ -131,6 +151,7 @@ extern int cors_corr_session_attach(cors_corr_session_t *sess,
     sess->req_mode=mntdef->mode;
     sess->mode=mntdef->mode;
     sess->svc=svc;
+    corr_sess_load_user_flags(sess);
     if (!svc->attach(sess)) return 0;
     sess->attached=1;
     return 1;

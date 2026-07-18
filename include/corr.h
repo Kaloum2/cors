@@ -129,6 +129,7 @@ typedef struct cors_corr_user_policy {
 
 #define CORS_CORR_LEGACY_TYPE_RELAY   1   /* info_tbl[0] match (relay ou VRS fixe) */
 #define CORS_CORR_LEGACY_TYPE_NEAR    2   /* mountpoint RTCM32                       */
+#define CORS_CORR_LEGACY_TYPE_CORR    3   /* registre FKP/VRS/MAC/AUTO (NTRIP_CONN_CORR) */
 
 /* Mappe conn->type + nom mountpoint vers un mode canonique */
 EXPORT cors_corr_mode_t cors_corr_mode_from_legacy(int conn_type,

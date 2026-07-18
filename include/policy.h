@@ -55,6 +55,8 @@ typedef struct cors_user_policy {
     cors_policy_mode_t allowed_modes;
     cors_user_region_t region;
     int max_sessions; /* 0 = unlimited */
+    /* 1 = FKP/VRS/MAC may use FLOAT baselines (stream without triangle FIX) */
+    int allow_float;
 } cors_user_policy_t;
 
 /* NTRIP HTTP responses (for ntripagent integration) --------------------------*/

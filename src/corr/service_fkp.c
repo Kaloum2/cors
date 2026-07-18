@@ -9,11 +9,12 @@ static int fkp_attach(cors_corr_session_t *sess)
 {
     cors_corr_sess_priv_t *p=corr_sess_priv(sess);
 
-    if (!corr_eligible_fkp(corr_global_ctx(),sess->pos)) {
+    if (!corr_eligible_fkp(corr_global_ctx(),sess->pos,corr_sess_allow_float(sess))) {
         log_trace(1,"corr fkp attach deferred (await GGA)\n");
     }
     strncpy(p->out_mntpnt,sess->conn->mntpnt,sizeof(p->out_mntpnt)-1);
-    log_trace(1,"corr fkp attach: %s\n",sess->conn->mntpnt);
+    log_trace(1,"corr fkp attach: %s allow_float=%d\n",
+              sess->conn->mntpnt,corr_sess_allow_float(sess));
     return 1;
 }
 
@@ -24,7 +25,7 @@ static void fkp_detach(cors_corr_session_t *sess)
 
 static int fkp_on_gga(cors_corr_session_t *sess, const double pos[3])
 {
-    if (!corr_eligible_fkp(corr_global_ctx(),pos)) {
+    if (!corr_eligible_fkp(corr_global_ctx(),pos,corr_sess_allow_float(sess))) {
         log_trace(1,"corr fkp: rejected (network not ready) %s\n",sess->conn->mntpnt);
         return 0;
     }
@@ -35,8 +36,9 @@ static int fkp_on_gga(cors_corr_session_t *sess, const double pos[3])
 static int fkp_produce(cors_corr_session_t *sess, uint8_t *buf, int max_len, const nav_t *nav)
 {
     if (norm(sess->pos,3)<=0.0) return 0;
-    if (!corr_eligible_fkp(corr_global_ctx(),sess->pos)) return 0;
-    return corr_pack_fkp(corr_global_ctx(),sess->pos,nav,(char*)buf,max_len);
+    if (!corr_eligible_fkp(corr_global_ctx(),sess->pos,corr_sess_allow_float(sess))) return 0;
+    return corr_pack_fkp(corr_global_ctx(),sess->pos,nav,(char*)buf,max_len,
+                         corr_sess_allow_float(sess));
 }
 
 static int fkp_sourcetable_str(const cors_corr_service_t *svc,

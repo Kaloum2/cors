@@ -9,7 +9,8 @@ static int mac_attach(cors_corr_session_t *sess)
 {
     strncpy(corr_sess_priv(sess)->out_mntpnt,sess->conn->mntpnt,
             sizeof(corr_sess_priv(sess)->out_mntpnt)-1);
-    log_trace(1,"corr mac attach: %s\n",sess->conn->mntpnt);
+    log_trace(1,"corr mac attach: %s allow_float=%d\n",
+              sess->conn->mntpnt,corr_sess_allow_float(sess));
     return 1;
 }
 
@@ -22,8 +23,9 @@ static int mac_on_gga(cors_corr_session_t *sess, const double pos[3])
 {
     corr_net_ctx_t net;
     cors_corr_sess_priv_t *p=corr_sess_priv(sess);
+    int allow_float=corr_sess_allow_float(sess);
 
-    if (!corr_eligible_mac(corr_global_ctx(),pos)) {
+    if (!corr_eligible_mac(corr_global_ctx(),pos,allow_float)) {
         log_trace(1,"corr mac: rejected (network not ready) %s\n",sess->conn->mntpnt);
         return 0;
     }
@@ -36,9 +38,11 @@ static int mac_on_gga(cors_corr_session_t *sess, const double pos[3])
 
 static int mac_produce(cors_corr_session_t *sess, uint8_t *buf, int max_len, const nav_t *nav)
 {
+    int allow_float=corr_sess_allow_float(sess);
+
     if (norm(sess->pos,3)<=0.0) return 0;
-    if (!corr_eligible_mac(corr_global_ctx(),sess->pos)) return 0;
-    return corr_pack_mac(corr_global_ctx(),sess->pos,nav,(char*)buf,max_len);
+    if (!corr_eligible_mac(corr_global_ctx(),sess->pos,allow_float)) return 0;
+    return corr_pack_mac(corr_global_ctx(),sess->pos,nav,(char*)buf,max_len,allow_float);
 }
 
 static int mac_sourcetable_str(const cors_corr_service_t *svc,

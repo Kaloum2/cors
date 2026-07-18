@@ -37,17 +37,20 @@ int corr_pos_in_dtrig(cors_corr_ctx_t *ctx, const double pos[3]);
 const cors_dtrig_t *corr_dtrig_at_pos(cors_corr_ctx_t *ctx, const double pos[3]);
 int corr_nearest_physical(cors_corr_ctx_t *ctx, const double pos[3], char *name, int n);
 int corr_dtrig_fixed_baseline_count(cors_corr_ctx_t *ctx, const cors_dtrig_t *d);
+int corr_dtrig_usable_baseline_count(cors_corr_ctx_t *ctx, const cors_dtrig_t *d,
+                                     int allow_float);
 int corr_net_ctx_at_pos(cors_corr_ctx_t *ctx, const double pos[3], corr_net_ctx_t *out);
 int corr_fkp_compute(cors_corr_ctx_t *ctx, const double pos[3], int sys,
-                     corr_fkp_data_t *fkp);
-int corr_eligible_vrs_dynamic(cors_corr_ctx_t *ctx, const double pos[3]);
-int corr_eligible_mac(cors_corr_ctx_t *ctx, const double pos[3]);
-int corr_eligible_fkp(cors_corr_ctx_t *ctx, const double pos[3]);
+                     corr_fkp_data_t *fkp, int allow_float);
+int corr_eligible_vrs_dynamic(cors_corr_ctx_t *ctx, const double pos[3],
+                              int allow_float);
+int corr_eligible_mac(cors_corr_ctx_t *ctx, const double pos[3], int allow_float);
+int corr_eligible_fkp(cors_corr_ctx_t *ctx, const double pos[3], int allow_float);
 int corr_srcinfo_name(cors_corr_ctx_t *ctx, int srcid, char *name, int n);
 int corr_srcinfo_pos(cors_corr_ctx_t *ctx, int srcid, double pos[3]);
 int corr_pack_fkp(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
-                  char *buff, int max);
+                  char *buff, int max, int allow_float);
 int corr_pack_mac(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
-                  char *buff, int max);
+                  char *buff, int max, int allow_float);
 
 #endif

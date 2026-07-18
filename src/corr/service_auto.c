@@ -11,12 +11,13 @@
 static int mode_eligible(cors_corr_session_t *sess, cors_corr_mode_t mode)
 {
     cors_corr_ctx_t *ctx=corr_global_ctx();
+    int allow_float=corr_sess_allow_float(sess);
 
     if (norm(sess->pos,3)<=0.0&&mode!=CORS_CORR_NEAR) return 0;
     switch (mode) {
-        case CORS_CORR_VRS_DYNAMIC: return corr_eligible_vrs_dynamic(ctx,sess->pos);
-        case CORS_CORR_MAC:         return corr_eligible_mac(ctx,sess->pos);
-        case CORS_CORR_FKP:         return corr_eligible_fkp(ctx,sess->pos);
+        case CORS_CORR_VRS_DYNAMIC: return corr_eligible_vrs_dynamic(ctx,sess->pos,allow_float);
+        case CORS_CORR_MAC:         return corr_eligible_mac(ctx,sess->pos,allow_float);
+        case CORS_CORR_FKP:         return corr_eligible_fkp(ctx,sess->pos,allow_float);
         case CORS_CORR_NEAR:        return norm(sess->pos,3)>0.0;
         default: return 0;
     }
@@ -35,7 +36,7 @@ static int auto_try(cors_corr_session_t *sess, cors_corr_mode_t mode)
     p->auto_svc=svc;
     p->auto_mode=mode;
     sess->mode=mode;
-    sess->svc=svc;
+    /* Keep sess->svc as AUTO so on_gga/produce stay on this wrapper. */
 
     snprintf(key,sizeof(key),"%p",(void*)sess->conn->conn);
     switch (mode) {
@@ -95,10 +96,32 @@ static int auto_on_gga(cors_corr_session_t *sess, const double pos[3])
 
 static int auto_produce(cors_corr_session_t *sess, uint8_t *buf, int max_len, const nav_t *nav)
 {
+    static const cors_corr_mode_t chain[]={
+        CORS_CORR_VRS_DYNAMIC, CORS_CORR_MAC, CORS_CORR_FKP, CORS_CORR_NEAR
+    };
     cors_corr_sess_priv_t *p=corr_sess_priv(sess);
+    int i,n,passed=0;
 
     if (!p->auto_svc&&!auto_select(sess)) return 0;
-    if (p->auto_svc&&p->auto_svc->produce) return p->auto_svc->produce(sess,buf,max_len,nav);
+    /* NEAR delivers via mountpoint remap (agent_upd_conn), not produce(). */
+    if (p->auto_mode==CORS_CORR_NEAR) return 0;
+    if (p->auto_svc&&p->auto_svc->produce) {
+        n=p->auto_svc->produce(sess,buf,max_len,nav);
+        if (n>0) return n;
+    }
+    /* Higher modes attached but idle — fall through (FKP payload or NEAR remap). */
+    for (i=0;i<(int)(sizeof(chain)/sizeof(chain[0]));i++) {
+        if (p->auto_mode==chain[i]) {passed=1; continue;}
+        if (!passed) continue;
+        if (p->auto_svc&&p->auto_svc->detach) p->auto_svc->detach(sess);
+        p->auto_svc=NULL;
+        if (!auto_try(sess,chain[i])) continue;
+        if (p->auto_mode==CORS_CORR_NEAR) return 0;
+        if (p->auto_svc&&p->auto_svc->produce) {
+            n=p->auto_svc->produce(sess,buf,max_len,nav);
+            if (n>0) return n;
+        }
+    }
     return 0;
 }
 

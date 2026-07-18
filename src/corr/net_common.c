@@ -133,6 +133,42 @@ const cors_dtrig_t *corr_dtrig_at_pos(cors_corr_ctx_t *ctx, const double pos[3])
     return cors_vrs_dtrig_at_pos(&ctx->cors->vrs,pos);
 }
 
+/* Prefer the containing triangle when RTK-ready; otherwise nearest triangle with
+ * enough usable baselines (dense mesh can place the rover in a triangle whose
+ * edges are not solved yet). */
+static const cors_dtrig_t *corr_dtrig_ready_at_pos(cors_corr_ctx_t *ctx, const double pos[3],
+                                                   int allow_float, int min_bls)
+{
+    cors_dtrig_t *d,*t;
+    const cors_dtrig_t *best=NULL,*containing;
+    double pc[3],dr[3],best_dist=0,dist;
+    int i,j,n,best_n=-1;
+
+    if (!ctx||!ctx->cors||!pos) return NULL;
+    containing=cors_vrs_dtrig_at_pos(&ctx->cors->vrs,pos);
+    if (containing&&
+        corr_dtrig_usable_baseline_count(ctx,containing,allow_float)>=min_bls) {
+        return containing;
+    }
+    HASH_ITER(hh,ctx->cors->nrtk.dtrig_net.dtrigs,d,t) {
+        if (!d->vt[0]||!d->vt[1]||!d->vt[2]) continue;
+        n=corr_dtrig_usable_baseline_count(ctx,d,allow_float);
+        if (n<min_bls) continue;
+        for (i=0;i<3;i++) {
+            for (pc[i]=0.0,j=0;j<3;j++) pc[i]+=d->vt[j]->pos[i];
+            pc[i]/=3.0;
+        }
+        for (i=0;i<3;i++) dr[i]=pos[i]-pc[i];
+        dist=norm(dr,3);
+        if (n>best_n||(n==best_n&&(best==NULL||dist<best_dist))) {
+            best=d;
+            best_n=n;
+            best_dist=dist;
+        }
+    }
+    return best?best:containing;
+}
+
 int corr_nearest_physical(cors_corr_ctx_t *ctx, const double pos[3], char *name, int n)
 {
     struct kdres *res;
@@ -148,11 +184,12 @@ int corr_nearest_physical(cors_corr_ctx_t *ctx, const double pos[3], char *name,
     return 1;
 }
 
-static cors_baseline_t *find_baseline(cors_srtk_t *srtk, int base, int rover)
+static cors_baseline_t *find_baseline_in_srtk(cors_srtk_t *srtk, int base, int rover)
 {
     cors_baseline_t *bl;
     char id[32];
 
+    if (!srtk) return NULL;
     snprintf(id,sizeof(id),"%d->%d",base,rover);
     HASH_FIND_STR(srtk->bls.data,id,bl);
     if (bl) return bl;
@@ -161,25 +198,80 @@ static cors_baseline_t *find_baseline(cors_srtk_t *srtk, int base, int rover)
     return bl;
 }
 
-static int baseline_is_fixed(const cors_baseline_t *bl)
+/* Same coverage as cmd_showbls: all nrtk.srtk workers + cors->srtk. */
+static cors_baseline_t *find_baseline(cors_corr_ctx_t *ctx, int base, int rover)
+{
+    cors_srtk_t *s,*t;
+    cors_baseline_t *bl;
+
+    if (!ctx||!ctx->cors) return NULL;
+    HASH_ITER(hh,ctx->cors->nrtk.srtk,s,t) {
+        bl=find_baseline_in_srtk(s,base,rover);
+        if (bl) return bl;
+    }
+    return find_baseline_in_srtk(&ctx->cors->srtk,base,rover);
+}
+
+static cors_baseline_t *dtrig_edge_baseline(const cors_dtrig_t *d, int srcid_a, int srcid_b)
+{
+    cors_dtrig_edge_t *e;
+    int i,a,b;
+
+    if (!d) return NULL;
+    for (i=0;i<3;i++) {
+        e=d->edge[i];
+        if (!e||!e->bl||!e->vt[0]||!e->vt[1]) continue;
+        a=e->vt[0]->srcid;
+        b=e->vt[1]->srcid;
+        if ((a==srcid_a&&b==srcid_b)||(a==srcid_b&&b==srcid_a)) return e->bl;
+    }
+    return NULL;
+}
+
+static cors_baseline_t *resolve_dtrig_baseline(cors_corr_ctx_t *ctx, const cors_dtrig_t *d,
+                                               int srcid_a, int srcid_b)
+{
+    cors_baseline_t *bl;
+
+    bl=dtrig_edge_baseline(d,srcid_a,srcid_b);
+    if (bl) return bl;
+    return find_baseline(ctx,srcid_a,srcid_b);
+}
+
+static int baseline_is_usable(const cors_baseline_t *bl, int allow_float)
 {
     if (!bl) return 0;
-    return bl->rtk.sol.stat==SOLQ_FIX;
+    if (bl->rtk.sol.stat==SOLQ_FIX) return 1;
+    if (allow_float&&bl->rtk.sol.stat==SOLQ_FLOAT) return 1;
+    return 0;
 }
 
 int corr_dtrig_fixed_baseline_count(cors_corr_ctx_t *ctx, const cors_dtrig_t *d)
 {
-    cors_srtk_t *srtk;
+    return corr_dtrig_usable_baseline_count(ctx,d,0);
+}
+
+int corr_dtrig_usable_baseline_count(cors_corr_ctx_t *ctx, const cors_dtrig_t *d,
+                                     int allow_float)
+{
     cors_baseline_t *bl;
     int i,j,n=0;
 
     if (!ctx||!ctx->cors||!d) return 0;
-    srtk=&ctx->cors->srtk;
     for (i=0;i<3;i++) {
         for (j=i+1;j<3;j++) {
             if (!d->vt[i]||!d->vt[j]) continue;
-            bl=find_baseline(srtk,d->vt[i]->srcid,d->vt[j]->srcid);
-            if (baseline_is_fixed(bl)) n++;
+            bl=resolve_dtrig_baseline(ctx,d,d->vt[i]->srcid,d->vt[j]->srcid);
+            if (!bl) {
+                log_trace(1,"corr dtrig edge missing: %d-%d\n",
+                          d->vt[i]->srcid,d->vt[j]->srcid);
+                continue;
+            }
+            if (baseline_is_usable(bl,allow_float)) n++;
+            else {
+                log_trace(1,"corr dtrig edge unusable: %d-%d sol.stat=%d allow_float=%d\n",
+                          d->vt[i]->srcid,d->vt[j]->srcid,bl->rtk.sol.stat,allow_float);
+            }
         }
     }
     return n;
@@ -194,12 +286,13 @@ int corr_net_ctx_at_pos(cors_corr_ctx_t *ctx, const double pos[3], corr_net_ctx_
 
     if (!out) return 0;
     memset(out,0,sizeof(*out));
-    d=corr_dtrig_at_pos(ctx,pos);
+    d=corr_dtrig_ready_at_pos(ctx,pos,1,2);
+    if (!d) d=corr_dtrig_at_pos(ctx,pos);
     if (!d) return 0;
 
     out->dtrig=d;
     out->n_physical=3;
-    out->n_fixed_bls=corr_dtrig_fixed_baseline_count(ctx,d);
+    out->n_fixed_bls=corr_dtrig_usable_baseline_count(ctx,d,0);
 
     for (i=0;i<3;i++) {
         if (!d->vt[i]) continue;
@@ -264,7 +357,8 @@ static int fit_plane_gradients(const double ref_ecef[3], rtk_t **rtk, int n,
     return 1;
 }
 
-static int collect_dtrig_rtk(const cors_dtrig_t *d, cors_srtk_t *srtk, rtk_t **rtk, int *n)
+static int collect_dtrig_rtk(cors_corr_ctx_t *ctx, const cors_dtrig_t *d, rtk_t **rtk,
+                             int *n, int allow_float)
 {
     cors_baseline_t *bl;
     int i,i2,cnt=0;
@@ -272,8 +366,8 @@ static int collect_dtrig_rtk(const cors_dtrig_t *d, cors_srtk_t *srtk, rtk_t **r
     for (i=0;i<3;i++) {
         i2=(i+1)%3;
         if (!d->vt[i]||!d->vt[i2]) continue;
-        bl=find_baseline(srtk,d->vt[i]->srcid,d->vt[i2]->srcid);
-        if (!bl||!baseline_is_fixed(bl)) continue;
+        bl=resolve_dtrig_baseline(ctx,d,d->vt[i]->srcid,d->vt[i2]->srcid);
+        if (!bl||!baseline_is_usable(bl,allow_float)) continue;
         rtk[cnt++]=&bl->rtk;
     }
     *n=cnt;
@@ -281,24 +375,22 @@ static int collect_dtrig_rtk(const cors_dtrig_t *d, cors_srtk_t *srtk, rtk_t **r
 }
 
 int corr_fkp_compute(cors_corr_ctx_t *ctx, const double pos[3], int sys,
-                     corr_fkp_data_t *fkp)
+                     corr_fkp_data_t *fkp, int allow_float)
 {
     corr_net_ctx_t net;
-    cors_srtk_t *srtk;
     rtk_t *rtk[3];
-    int nrtk,i,prn,sat,ns=0;
+    int nrtk,prn,sat,ns=0;
     double gn,ge,refpos[3];
 
     if (!ctx||!ctx->cors||!pos||!fkp) return 0;
     memset(fkp,0,sizeof(*fkp));
     if (!corr_net_ctx_at_pos(ctx,pos,&net)) return 0;
 
-    srtk=&ctx->cors->srtk;
     fkp->staid=net.master_srcid;
     if (!corr_srcinfo_pos(ctx,net.master_srcid,refpos)) {
         matcpy(refpos,net.dtrig->vt[0]->pos,1,3);
     }
-    if (!collect_dtrig_rtk(net.dtrig,srtk,rtk,&nrtk)) return 0;
+    if (!collect_dtrig_rtk(ctx,net.dtrig,rtk,&nrtk,allow_float)) return 0;
 
     for (sat=1;sat<=MAXSAT&&ns<CORR_FKP_MAXSAT;sat++) {
         if (satsys(sat,&prn)!=sys) continue;
@@ -315,29 +407,47 @@ int corr_fkp_compute(cors_corr_ctx_t *ctx, const double pos[3], int sys,
     return ns>0;
 }
 
-int corr_eligible_vrs_dynamic(cors_corr_ctx_t *ctx, const double pos[3])
+int corr_eligible_vrs_dynamic(cors_corr_ctx_t *ctx, const double pos[3],
+                              int allow_float)
 {
     const cors_dtrig_t *d;
 
     if (!corr_pos_in_dtrig(ctx,pos)) return 0;
-    d=corr_dtrig_at_pos(ctx,pos);
-    return corr_dtrig_fixed_baseline_count(ctx,d)>=g_corr_cfg.auto_vrs_min_fixed_bls;
+    d=corr_dtrig_ready_at_pos(ctx,pos,allow_float,g_corr_cfg.auto_vrs_min_fixed_bls);
+    return d&&corr_dtrig_usable_baseline_count(ctx,d,allow_float)>=
+           g_corr_cfg.auto_vrs_min_fixed_bls;
 }
 
-int corr_eligible_mac(cors_corr_ctx_t *ctx, const double pos[3])
+int corr_eligible_mac(cors_corr_ctx_t *ctx, const double pos[3], int allow_float)
 {
     corr_net_ctx_t net;
+    int n_bls;
 
     if (!corr_net_ctx_at_pos(ctx,pos,&net)) return 0;
+    n_bls=corr_dtrig_usable_baseline_count(ctx,net.dtrig,allow_float);
     return net.n_physical>=g_corr_cfg.auto_fkp_min_stations&&
-           net.n_fixed_bls>=g_corr_cfg.auto_mac_min_fixed_bls;
+           n_bls>=g_corr_cfg.auto_mac_min_fixed_bls;
 }
 
-int corr_eligible_fkp(cors_corr_ctx_t *ctx, const double pos[3])
+int corr_eligible_fkp(cors_corr_ctx_t *ctx, const double pos[3], int allow_float)
 {
     corr_net_ctx_t net;
+    int n_bls;
 
-    if (!corr_net_ctx_at_pos(ctx,pos,&net)) return 0;
-    return net.n_physical>=g_corr_cfg.auto_fkp_min_stations&&
-           net.n_fixed_bls>=2;
+    if (!corr_net_ctx_at_pos(ctx,pos,&net)) {
+        log_trace(1,"corr fkp eligible: no dtrig at pos allow_float=%d\n",allow_float);
+        return 0;
+    }
+    n_bls=corr_dtrig_usable_baseline_count(ctx,net.dtrig,allow_float);
+    if (net.n_physical<g_corr_cfg.auto_fkp_min_stations||n_bls<2) {
+        log_trace(1,"corr fkp eligible: master=%s vt=%d,%d,%d n_phys=%d n_bls=%d need_sta=%d allow_float=%d\n",
+                  net.master_name,
+                  net.dtrig->vt[0]?net.dtrig->vt[0]->srcid:-1,
+                  net.dtrig->vt[1]?net.dtrig->vt[1]->srcid:-1,
+                  net.dtrig->vt[2]?net.dtrig->vt[2]->srcid:-1,
+                  net.n_physical,n_bls,g_corr_cfg.auto_fkp_min_stations,
+                  allow_float);
+        return 0;
+    }
+    return 1;
 }

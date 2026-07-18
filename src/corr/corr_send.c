@@ -6,11 +6,6 @@
 #include "log.h"
 #include <string.h>
 
-int corr_pack_fkp(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
-                  char *buff, int max);
-int corr_pack_mac(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
-                  char *buff, int max);
-
 static int fkp_to_rtcm(const corr_fkp_data_t *fkp, rtcm_fkp_sat_t *out, int max)
 {
     int i,n=fkp->nsat>max?max:fkp->nsat;
@@ -50,22 +45,22 @@ static int pack_master_obs(cors_corr_ctx_t *ctx, int srcid, const nav_t *nav,
     if (!ctx||!ctx->cors||!nav||!buff||max<=0) return 0;
     HASH_FIND_INT(ctx->cors->obs.data,&srcid,od);
     if (!od||od->obs.n<=0) return 0;
-    nb=rtcm_encode_obs(&rtcm,type,1,nav,od->obs.data,od->obs.n,buff);
+    nb=rtcm_encode_obs(&rtcm,type,1,nav,od->obs.data,od->obs.n,buff,max);
     return nb>max?0:nb;
 }
 
 static int append_fkp_msgs(cors_corr_ctx_t *ctx, const double pos[3],
-                           int staid, char *buff, int max)
+                           int staid, char *buff, int max, int allow_float)
 {
     corr_fkp_data_t gps,glo;
     rtcm_fkp_sat_t rsat[CORR_FKP_MAXSAT];
     int nb=0,ns;
 
-    if (corr_fkp_compute(ctx,pos,SYS_GPS,&gps)) {
+    if (corr_fkp_compute(ctx,pos,SYS_GPS,&gps,allow_float)) {
         ns=fkp_to_rtcm(&gps,rsat,CORR_FKP_MAXSAT);
         nb+=rtcm_encode_fkp(1034,staid,rsat,ns,buff+nb);
     }
-    if (corr_fkp_compute(ctx,pos,SYS_GLO,&glo)) {
+    if (corr_fkp_compute(ctx,pos,SYS_GLO,&glo,allow_float)) {
         ns=fkp_to_rtcm(&glo,rsat,CORR_FKP_MAXSAT);
         nb+=rtcm_encode_fkp(1035,staid,rsat,ns,buff+nb);
     }
@@ -73,7 +68,7 @@ static int append_fkp_msgs(cors_corr_ctx_t *ctx, const double pos[3],
 }
 
 int corr_pack_fkp(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
-                  char *buff, int max)
+                  char *buff, int max, int allow_float)
 {
     corr_net_ctx_t net;
     int nb=0;
@@ -83,13 +78,13 @@ int corr_pack_fkp(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
     if (!corr_net_ctx_at_pos(ctx,pos,&net)) return 0;
 
     nb+=pack_sta1005(ctx,net.master_srcid,buff+nb,max-nb);
-    nb+=append_fkp_msgs(ctx,pos,net.master_srcid,buff+nb,max-nb);
+    nb+=append_fkp_msgs(ctx,pos,net.master_srcid,buff+nb,max-nb,allow_float);
     if (max-nb>0) nb+=rtcm_encode_nav(navtype,nav,buff+nb);
     return nb>max?0:nb;
 }
 
 int corr_pack_mac(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
-                  char *buff, int max)
+                  char *buff, int max, int allow_float)
 {
     corr_net_ctx_t net;
     int nb=0,i;
@@ -104,7 +99,7 @@ int corr_pack_mac(cors_corr_ctx_t *ctx, const double pos[3], const nav_t *nav,
         if (net.aux_srcid[i]<=0) continue;
         nb+=pack_sta1005(ctx,net.aux_srcid[i],buff+nb,max-nb);
     }
-    nb+=append_fkp_msgs(ctx,pos,net.master_srcid,buff+nb,max-nb);
+    nb+=append_fkp_msgs(ctx,pos,net.master_srcid,buff+nb,max-nb,allow_float);
     if (max-nb>0) nb+=rtcm_encode_nav(navtype,nav,buff+nb);
     return nb>max?0:nb;
 }

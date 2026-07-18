@@ -8,14 +8,16 @@
 
 typedef struct cors_corr_sess_priv {
     cors_corr_ctx_t *ctx;
-    char out_mntpnt[32];
-    char vsta_name[32];
+    char out_mntpnt[64];
+    char vsta_name[64];
     const cors_corr_service_t *auto_svc;
     cors_corr_mode_t auto_mode;
+    int allow_float; /* from user policy: accept FLOAT baselines */
 } cors_corr_sess_priv_t;
 
 cors_corr_sess_priv_t *corr_sess_priv(cors_corr_session_t *sess);
 cors_corr_ctx_t *corr_global_ctx(void);
+int corr_sess_allow_float(cors_corr_session_t *sess);
 
 extern const cors_corr_service_t cors_corr_service_relay;
 extern const cors_corr_service_t cors_corr_service_near;

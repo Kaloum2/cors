@@ -60,7 +60,7 @@ static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
     buf->len=suggested_size;
 }
 
-#define NTRIP_CONN_CORR  3
+#define NTRIP_CONN_CORR  CORS_CORR_LEGACY_TYPE_CORR
 
 static void safe_strcpy(char *dst, size_t dstsz, const char *src)
 {
@@ -375,19 +375,20 @@ static void deny_policy(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
     ntripagnet_del_conn(agent,conn);
 }
 
-static int test_vstachg(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, char *new_mntpnt)
+static int test_vstachg(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn,
+                        char *new_mntpnt, size_t new_mntpnt_sz)
 {
     struct kdres *res;
     struct kdtree *vts_kdtree=agent->ntrip->src_kdtree;
     cors_ntrip_source_info_t *info;
 
     if (conn->type!=2||norm(conn->pos,3)<=0.0) return 0;
-    if (!vts_kdtree) return 0;
+    if (!vts_kdtree||!new_mntpnt||new_mntpnt_sz==0) return 0;
     if (!(res=kd_nearest(vts_kdtree,conn->pos))) return 0;
     info=kd_res_item_data(res);
 
     if (strcmp(new_mntpnt,info->name)) {
-        safe_strcpy(new_mntpnt,sizeof(new_mntpnt),info->name);
+        safe_strcpy(new_mntpnt,new_mntpnt_sz,info->name);
         return 1;
     }
     return 0;
@@ -437,7 +438,15 @@ static void agent_upd_conn(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
     }
     if (strcmp(new_mntpnt,conn->mntpnt)) {
         HASH_FIND_STR(agent->cq_tbl,conn->mntpnt,q);
+        if (!q) {
+            uv_mutex_unlock(&agent->cq_lock);
+            return;
+        }
         HASH_FIND_PTR(q->cs,&str,c);
+        if (!c) {
+            uv_mutex_unlock(&agent->cq_lock);
+            return;
+        }
         HASH_DEL(q->cs,c);
     }
     else {
@@ -456,7 +465,7 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
                            char *buff, int nb)
 {
     char url[256]="",mntpnt[256]="",proto[256]="",*p,*q;
-    char user[513]={0},user_pwd[256]={0},new_mntpnt[32]={0};
+    char user[513]={0},user_pwd[256]={0},new_mntpnt[64]={0};
     char peer_ip[48]={0};
     cors_ntrip_user_t *u=NULL;
     cors_corr_policy_result_t pres;
@@ -478,13 +487,14 @@ static int agent_test_msgc(cors_ntrip_agent_t *agent, cors_ntrip_conn_t *conn, u
             }
         }
         if (conn->type==CORS_CORR_LEGACY_TYPE_NEAR) {
-            test_vstachg(agent,conn,new_mntpnt);
+            test_vstachg(agent,conn,new_mntpnt,sizeof(new_mntpnt));
         }
         else if (conn->type==NTRIP_CONN_CORR) {
             if (cors_corr_conn_gga(conn,conn->pos)) {
-                cors_corr_conn_output(conn,new_mntpnt,sizeof(new_mntpnt));
+                /* refresh below after produce — mode fallback may change out_mntpnt */
             }
             cors_corr_conn_push(conn);
+            cors_corr_conn_output(conn,new_mntpnt,sizeof(new_mntpnt));
         }
         agent_upd_conn(agent,conn,str,new_mntpnt);
         return 1;

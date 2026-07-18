@@ -1,7 +1,7 @@
 # NTRIP agent users — extended format (conf/agentusers)
 #
 # Columns (CSV, comma-separated):
-#   user,passwd[,allowed_modes[,region[,max_sessions]]]
+#   user,passwd[,allowed_modes[,region[,max_sessions[,allow_float]]]]
 #
 # allowed_modes : pipe-separated mode names, or * for all
 #   RELAY | VRS | VRS_DYNAMIC | FKP | MAC | IMAX | AUTO
@@ -14,7 +14,14 @@
 #
 # max_sessions : integer, or * for unlimited (default when omitted)
 #
-# Backward compatible: "user,passwd" only → all modes, no region, unlimited.
+# allow_float : optional trailing keyword — stream FKP/VRS/MAC even when
+#               triangle baselines are FLOAT (not FIX). Values:
+#                 allow_float | float | nofix   → enabled
+#                 allow_float=0 | allow_float=1 → explicit
+#               Default (omitted): require FIX on triangle baselines.
+#
+# Backward compatible: "user,passwd" only → all modes, no region, unlimited,
+# require FIX.
 
 # legacy user — full access (same as before)
 legacy,legacy
@@ -27,6 +34,9 @@ field,field,RELAY|AUTO,poly:48.80,2.20;48.90,2.20;48.90,2.45;48.80,2.45,2
 
 # pro — all modes, no region limit, 3 sessions
 pro,secret,*,*,3
+
+# lab — all modes, accept FLOAT baselines (lab / Centipede validation)
+lab,lab,*,*,5,allow_float
 
 # mac-only rover fleet
 fleet,fleet,MAC|FKP,*,5
