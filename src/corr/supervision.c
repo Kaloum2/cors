@@ -213,6 +213,17 @@ extern void cors_corr_log_event(uint64_t session_id, cors_corr_event_t event,
             s->pos[2] = pos[2];
             s->last_gga_time = timeget();
         }
+        if (reason_buf[0]) {
+            strncpy(s->detail, reason_buf, CORR_SV_DETAIL_LEN - 1);
+            s->detail[CORR_SV_DETAIL_LEN - 1] = '\0';
+        }
+        if (event == CORR_EVT_VRS_CREATED && reason_buf[0]) {
+            strncpy(s->vrs_name, reason_buf, CORR_SV_VRS_LEN - 1);
+            s->vrs_name[CORR_SV_VRS_LEN - 1] = '\0';
+        }
+        if (event == CORR_EVT_VRS_DESTROYED) {
+            s->vrs_name[0] = '\0';
+        }
         corr_recount_active_sessions();
     }
 
@@ -232,6 +243,54 @@ extern void cors_corr_log_event(uint64_t session_id, cors_corr_event_t event,
               cors_corr_mode_str(mode),
               pos_str,
               reason_buf[0] ? reason_buf : "-");
+}
+
+extern void cors_corr_session_set_detail(uint64_t session_id, const char *detail)
+{
+    cors_corr_sv_session_t *s;
+
+    if (!corr_sv.initialized || !detail) return;
+    uv_mutex_lock(&corr_sv.lock);
+    s = corr_find_session(session_id);
+    if (s) {
+        strncpy(s->detail, detail, CORR_SV_DETAIL_LEN - 1);
+        s->detail[CORR_SV_DETAIL_LEN - 1] = '\0';
+    }
+    uv_mutex_unlock(&corr_sv.lock);
+}
+
+extern void cors_corr_session_set_vrs(uint64_t session_id, const char *vrs_name)
+{
+    cors_corr_sv_session_t *s;
+
+    if (!corr_sv.initialized) return;
+    uv_mutex_lock(&corr_sv.lock);
+    s = corr_find_session(session_id);
+    if (s) {
+        if (vrs_name && *vrs_name) {
+            strncpy(s->vrs_name, vrs_name, CORR_SV_VRS_LEN - 1);
+            s->vrs_name[CORR_SV_VRS_LEN - 1] = '\0';
+        }
+        else {
+            s->vrs_name[0] = '\0';
+        }
+    }
+    uv_mutex_unlock(&corr_sv.lock);
+}
+
+extern void cors_corr_session_add_bytes(uint64_t session_id, int nbytes)
+{
+    cors_corr_sv_session_t *s;
+
+    if (!corr_sv.initialized || nbytes <= 0) return;
+    uv_mutex_lock(&corr_sv.lock);
+    s = corr_find_session(session_id);
+    if (s) {
+        s->bytes_out += (uint64_t)nbytes;
+        s->last_produce = timeget();
+        corr_sv.stats.bytes_out_total += (uint64_t)nbytes;
+    }
+    uv_mutex_unlock(&corr_sv.lock);
 }
 
 extern void cors_corr_supervision_log(const char *session, const char *mountpoint,
@@ -283,7 +342,7 @@ extern int cors_corr_monitor_showsessions(char *out, int outlen)
 {
     cors_corr_sv_session_t *s, *tmp;
     int n = 0, rem;
-    char tstr[32], pos_str[64];
+    char tstr[32], pos_str[64], prod_str[32];
 
     if (!out || outlen <= 0) return 0;
     if (!corr_sv.initialized) cors_corr_supervision_init();
@@ -297,16 +356,23 @@ extern int cors_corr_monitor_showsessions(char *out, int outlen)
     HASH_ITER(hh, corr_sv.sessions, s, tmp) {
         time2str(s->start_time, tstr, 0);
         corr_format_pos(s->pos, pos_str, sizeof(pos_str));
+        if (s->last_produce.time) time2str(s->last_produce, prod_str, 0);
+        else strcpy(prod_str, "-");
         n += snprintf(out + n, rem - n,
                       "session_id=%llu user=%s mountpoint=%s "
-                      "requested=%s effective=%s pos=%s start=%s\n",
+                      "requested=%s effective=%s pos=%s start=%s "
+                      "vrs=%s bytes_out=%llu last_produce=%s detail=%s\n",
                       (unsigned long long)s->session_id,
                       s->user,
                       s->mountpoint,
                       cors_corr_mode_str(s->requested_mode),
                       cors_corr_mode_str(s->effective_mode),
                       pos_str,
-                      tstr);
+                      tstr,
+                      s->vrs_name[0] ? s->vrs_name : "-",
+                      (unsigned long long)s->bytes_out,
+                      prod_str,
+                      s->detail[0] ? s->detail : "-");
         rem = outlen - n;
         if (rem <= 0) break;
     }
@@ -332,9 +398,10 @@ extern int cors_corr_monitor_showmode_stats(char *out, int outlen)
         if (rem <= 0) return n;
     }
     n += snprintf(out + n, rem - n,
-                  "fallback_auto=%llu policy_denied=%llu\n",
+                  "fallback_auto=%llu policy_denied=%llu bytes_out_total=%llu\n",
                   (unsigned long long)stats.fallback_auto,
-                  (unsigned long long)stats.policy_denied);
+                  (unsigned long long)stats.policy_denied,
+                  (unsigned long long)stats.bytes_out_total);
     return n;
 }
 

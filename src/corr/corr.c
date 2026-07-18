@@ -511,6 +511,14 @@ extern int cors_corr_conn_push(cors_ntrip_conn_t *conn)
     nb=cors_corr_session_produce(&c->sess,(uint8_t*)buff,sizeof(buff),nav);
     if (nb<=0) return 0;
 
+    if (conn->sv_session_id) {
+        cors_corr_session_add_bytes(conn->sv_session_id,nb);
+        p=corr_sess_priv(&c->sess);
+        if (p&&p->vsta_name[0]) {
+            cors_corr_session_set_vrs(conn->sv_session_id,p->vsta_name);
+        }
+    }
+
     p=corr_sess_priv(&c->sess);
     mnt=conn->mntpnt;
     if (p&&p->out_mntpnt[0]) mnt=p->out_mntpnt;

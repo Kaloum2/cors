@@ -30,6 +30,11 @@ static void vrs_dyn_detach(cors_corr_session_t *sess)
     vrs=&corr_global_ctx()->cors->vrs;
     log_trace(1,"corr vrs_dynamic detach: %s\n",p->vsta_name);
     vrs_del_vsta(vrs,p->vsta_name);
+    if (sess->conn&&sess->conn->sv_session_id) {
+        cors_corr_log_event(sess->conn->sv_session_id,CORR_EVT_VRS_DESTROYED,
+                            CORS_CORR_VRS_DYNAMIC,NULL,p->vsta_name);
+        cors_corr_session_set_vrs(sess->conn->sv_session_id,NULL);
+    }
     p->vsta_name[0]='\0';
     p->out_mntpnt[0]='\0';
 }
@@ -46,6 +51,9 @@ static int vrs_dyn_ensure(cors_corr_session_t *sess, const double *pos)
     if (!ctx->cors||norm((double*)pos,3)<=0.0) return 0;
     if (!corr_pos_in_dtrig(ctx,pos)) {
         log_trace(1,"corr vrs_dynamic: rejected (outside dtrig) %s\n",p->vsta_name);
+        if (sess->conn&&sess->conn->sv_session_id) {
+            cors_corr_session_set_detail(sess->conn->sv_session_id,"outside_dtrig");
+        }
         return 0;
     }
     vrs=&ctx->cors->vrs;
@@ -62,6 +70,11 @@ static int vrs_dyn_ensure(cors_corr_session_t *sess, const double *pos)
     strncpy(p->out_mntpnt,p->vsta_name,sizeof(p->out_mntpnt)-1);
     log_trace(1,"corr vrs_dynamic: created/updated %s in_dtrig=1 move=%.0fm\n",
               p->vsta_name,thresh);
+    if (sess->conn&&sess->conn->sv_session_id) {
+        cors_corr_log_event(sess->conn->sv_session_id,CORR_EVT_VRS_CREATED,
+                            CORS_CORR_VRS_DYNAMIC,pos,p->vsta_name);
+        cors_corr_session_set_detail(sess->conn->sv_session_id,"in_dtrig=1");
+    }
     return 1;
 }
 

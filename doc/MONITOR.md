@@ -90,8 +90,15 @@ Supervision des sessions modes correction (`src/corr/supervision.c`).
 
 | Sous-commande | Contenu |
 |---------------|---------|
-| `showsessions` | Sessions actives (mountpoint, mode, rover, durée) |
-| `showmode_stats` | Compteurs par mode (VRS, FKP, MAC, AUTO, …) |
+| `showsessions` | Sessions actives + métriques FKP/VRS (`vrs`, `bytes_out`, `last_produce`, `detail`) |
+| `showmode_stats` | Compteurs par mode + `bytes_out_total` |
+
+Réponse type `showsessions` (champs additionnels en fin de ligne) :
+
+```text
+active_sessions=1
+session_id=1 user=demo mountpoint=AUTO requested=AUTO effective=VRS_DYNAMIC pos=48.856600,2.352200,120.0 start=2026/07/18 10:15:00 vrs=VRS_0x7f… bytes_out=4096 last_produce=2026/07/18 10:15:12 detail=in_dtrig=1
+```
 
 > **Note rtn-platform :** non consommé par le bridge P1 — extension P2 pour supervision UI.
 

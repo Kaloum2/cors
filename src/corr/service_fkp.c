@@ -3,6 +3,7 @@
  *-----------------------------------------------------------------------------*/
 #include "corr_i.h"
 #include "net_common.h"
+#include "supervision.h"
 #include "log.h"
 
 static int fkp_attach(cors_corr_session_t *sess)
@@ -27,9 +28,15 @@ static int fkp_on_gga(cors_corr_session_t *sess, const double pos[3])
 {
     if (!corr_eligible_fkp(corr_global_ctx(),pos,corr_sess_allow_float(sess))) {
         log_trace(1,"corr fkp: rejected (network not ready) %s\n",sess->conn->mntpnt);
+        if (sess->conn&&sess->conn->sv_session_id) {
+            cors_corr_session_set_detail(sess->conn->sv_session_id,"network not ready");
+        }
         return 0;
     }
     log_trace(1,"corr fkp on_gga: %s nsat ready\n",sess->conn->mntpnt);
+    if (sess->conn&&sess->conn->sv_session_id) {
+        cors_corr_session_set_detail(sess->conn->sv_session_id,"fkp_ready");
+    }
     return 1;
 }
 

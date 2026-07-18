@@ -20,6 +20,8 @@ extern "C" {
 #define CORR_SV_MNTPNT_LEN   32
 #define CORR_SV_KEY_LEN      32
 #define CORR_SV_REASON_LEN   128
+#define CORR_SV_DETAIL_LEN   128
+#define CORR_SV_VRS_LEN      64
 
 typedef enum cors_corr_event {
     CORR_EVT_SESSION_START  = 0,
@@ -43,6 +45,10 @@ typedef struct cors_corr_sv_session {
     double pos[3];
     gtime_t start_time;
     gtime_t last_gga_time;
+    char detail[CORR_SV_DETAIL_LEN];
+    char vrs_name[CORR_SV_VRS_LEN];
+    uint64_t bytes_out;
+    gtime_t last_produce;
     UT_hash_handle hh;
 } cors_corr_sv_session_t;
 
@@ -51,6 +57,7 @@ typedef struct cors_corr_mode_stats {
     uint64_t fallback_auto;
     uint64_t policy_denied;
     uint64_t total_events[CORR_EVT_COUNT];
+    uint64_t bytes_out_total;
 } cors_corr_mode_stats_t;
 
 EXPORT void cors_corr_supervision_init(void);
@@ -64,6 +71,10 @@ EXPORT void cors_corr_session_deregister(uint64_t session_id);
 EXPORT void cors_corr_log_event(uint64_t session_id, cors_corr_event_t event,
                                 cors_corr_mode_t effective_mode,
                                 const double *pos, const char *reason);
+
+EXPORT void cors_corr_session_set_detail(uint64_t session_id, const char *detail);
+EXPORT void cors_corr_session_set_vrs(uint64_t session_id, const char *vrs_name);
+EXPORT void cors_corr_session_add_bytes(uint64_t session_id, int nbytes);
 
 EXPORT int cors_corr_session_count(void);
 EXPORT int cors_corr_get_mode_stats(cors_corr_mode_stats_t *stats);
