@@ -399,6 +399,79 @@ extern void cors_del_source(cors_t *cors, const char *name)
     cors_ntrip_del_source(&cors->ntrip,name);
 }
 
+extern int cors_exclude_source(cors_t *cors, const char *name, const char *reason)
+{
+    cors_ntrip_source_info_t *s;
+
+    if (!cors||!name||!*name) return 0;
+    HASH_FIND_STR(cors->ntrip.info_tbl[0],name,s);
+    if (!s) return 0;
+
+    if (!s->excluded&&s->nrtk_meshed) {
+        cors_nrtk_del_source(&cors->nrtk,s->ID);
+        s->nrtk_meshed=0;
+    }
+    s->excluded=1;
+    if (reason&&*reason) {
+        snprintf(s->exclude_reason,sizeof(s->exclude_reason),"%s",reason);
+    }
+    else {
+        snprintf(s->exclude_reason,sizeof(s->exclude_reason),"manual");
+    }
+    s->exclude_time=utc2gpst(timeget());
+    log_trace(1,"exclude source %s id=%d reason=%s\n",s->name,s->ID,s->exclude_reason);
+    return 1;
+}
+
+extern int cors_include_source(cors_t *cors, const char *name)
+{
+    cors_ntrip_source_info_t *s;
+
+    if (!cors||!name||!*name) return 0;
+    HASH_FIND_STR(cors->ntrip.info_tbl[0],name,s);
+    if (!s) return 0;
+
+    s->excluded=0;
+    s->exclude_reason[0]='\0';
+    s->exclude_time.time=0;
+    s->exclude_time.sec=0.0;
+    /* Remesh on next decoded obs (decoder.c). */
+    s->nrtk_meshed=0;
+    log_trace(1,"include source %s id=%d (mesh deferred until obs)\n",s->name,s->ID);
+    return 1;
+}
+
+extern int cors_monitor_showexclude(const cors_t *cors, char *out, int outlen)
+{
+    cors_ntrip_source_info_t *s,*t;
+    int n=0,rem,count=0;
+    char tstr[64];
+
+    if (!cors||!out||outlen<=0) return 0;
+
+    HASH_ITER(hh,cors->ntrip.info_tbl[0],s,t) {
+        if (s->excluded) count++;
+    }
+    rem=outlen;
+    n+=snprintf(out+n,rem-n,"excluded=%d\n",count);
+    rem=outlen-n;
+    if (rem<=0) return n;
+
+    HASH_ITER(hh,cors->ntrip.info_tbl[0],s,t) {
+        if (!s->excluded) continue;
+        if (s->exclude_time.time) time2str(s->exclude_time,tstr,0);
+        else strcpy(tstr,"-");
+        n+=snprintf(out+n,rem-n,
+                    "name=%s id=%d reason=%s since=%s\n",
+                    s->name,s->ID,
+                    s->exclude_reason[0]?s->exclude_reason:"-",
+                    tstr);
+        rem=outlen-n;
+        if (rem<=0) break;
+    }
+    return n;
+}
+
 extern void cors_add_baseline(cors_t *cors, const char *base, const char *rover)
 {
     cors_ntrip_source_info_t *r,*b;

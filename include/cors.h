@@ -67,6 +67,9 @@ typedef struct cors_ntrip_source_info {
     int port,ID,type;
     double pos[3];
     int nrtk_meshed; /* 1 after first obs inserted this source into dtrig_net */
+    int excluded; /* 1 = soft-removed from NRTK mesh (STA-06), stream kept */
+    char exclude_reason[64];
+    gtime_t exclude_time;
     cors_ntrip_source_t *src;
     UT_hash_handle hh;
     UT_hash_handle ii;
@@ -591,6 +594,9 @@ EXPORT void cors_initobs(cors_obs_t *obs);
 EXPORT void cors_add_source(cors_t *cors, const char *name, const char *addr, int port, const char *user, const char *passwd,
                             const char *mntpnt, const double *pos);
 EXPORT void cors_del_source(cors_t *cors, const char *name);
+EXPORT int cors_exclude_source(cors_t *cors, const char *name, const char *reason);
+EXPORT int cors_include_source(cors_t *cors, const char *name);
+EXPORT int cors_monitor_showexclude(const cors_t *cors, char *out, int outlen);
 EXPORT void cors_add_baseline(cors_t *cors, const char *base, const char *rover);
 EXPORT void cors_del_baseline(cors_t *cors, const char *base, const char *rover);
 EXPORT void cors_basenet_del_baseline(cors_t *cors, const char *base, const char *rover);

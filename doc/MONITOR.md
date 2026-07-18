@@ -57,9 +57,25 @@ Réponse **vide** (aucune station) : connexion fermée sans ligne — comporteme
 
 ```text
 MONITOR-SOURCE all
+MONITOR-SOURCE showexclude
 ```
 
-État des connexions sources upstream (`addsource`). Utilisé pour compter stations connectées.
+| Sous-commande | Contenu |
+|---------------|---------|
+| `all` (et abonnements nommés) | État / flux des connexions sources upstream (`addsource`) |
+| `showexclude` | Stations soft-exclues du maillage NRTK (STA-06) |
+
+Réponse type `showexclude` :
+
+```text
+excluded=2
+name=IPGP id=1 reason=manual since=2026/07/18 10:00:00
+name=OUIL id=3 reason=maintenance since=2026/07/18 10:05:00
+```
+
+CLI équivalente (console engine) : `excludesource <name> [reason]`, `includesource <name>`, `showexclude`.
+
+L’exclusion retire la station du maillage Delaunay sans `delsource` (flux NTRIP / RINEX conservés). `includesource` autorise le remesh à la prochaine observation.
 
 ---
 

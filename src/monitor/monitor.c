@@ -125,7 +125,24 @@ static void on_read_cb(uv_stream_t *str, ssize_t nr, const uv_buf_t *buf)
     free(buf->base);
 
     if ((p=strrstr(msg,MONITOR_CMD_SOURCE))) {
-        monitor_src_updconn(str,p);
+        char *q=p+strlen(MONITOR_CMD_SOURCE);
+        while (*q==' '||*q=='\t') q++;
+        if (!strncmp(q,"showexclude",11)&&
+            (q[11]=='\0'||q[11]=='\r'||q[11]=='\n'||q[11]==' '||q[11]=='\t')) {
+            char out[4096];
+            int nb;
+            cors_monitord_t *md=str->data;
+            nb=cors_monitor_showexclude(md->monitor->cors,out,(int)sizeof(out));
+            if (nb<=0) {
+                monitor_corr_reply(str,"excluded=0\n",11);
+            }
+            else {
+                monitor_corr_reply(str,out,nb);
+            }
+        }
+        else {
+            monitor_src_updconn(str,p);
+        }
     }
     else if ((p=strrstr(msg,MONITOR_CMD_BSTA_DISTR))) {
         monitor_bsta_distr(str,p);

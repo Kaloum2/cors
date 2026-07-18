@@ -173,6 +173,58 @@ static void cmd_delete_source(char **args, int narg, vt_t *vt)
     vt_printf(vt,"\n");
 }
 
+static void cmd_exclude_source(char **args, int narg, vt_t *vt)
+{
+    const char *reason="manual";
+
+    if (!cors.state) {
+        vt_printf(vt,"cors server has not been started\n");
+        return;
+    }
+    if (narg<2) {
+        vt_printf(vt,"usage: excludesource <name> [reason]\n");
+        return;
+    }
+    if (narg>=3) reason=args[2];
+    if (!cors_exclude_source(&cors,args[1],reason)) {
+        vt_printf(vt,"excludesource: unknown source '%s'\n",args[1]);
+        return;
+    }
+    vt_printf(vt,"excluded %s reason=%s\n",args[1],reason);
+}
+
+static void cmd_include_source(char **args, int narg, vt_t *vt)
+{
+    if (!cors.state) {
+        vt_printf(vt,"cors server has not been started\n");
+        return;
+    }
+    if (narg<2) {
+        vt_printf(vt,"usage: includesource <name>\n");
+        return;
+    }
+    if (!cors_include_source(&cors,args[1])) {
+        vt_printf(vt,"includesource: unknown source '%s'\n",args[1]);
+        return;
+    }
+    vt_printf(vt,"included %s (mesh deferred until obs)\n",args[1]);
+}
+
+static void cmd_showexclude(char **args, int narg, vt_t *vt)
+{
+    char out[4096];
+    int n;
+
+    (void)args; (void)narg;
+    if (!cors.state) {
+        vt_printf(vt,"cors server has not been started\n");
+        return;
+    }
+    n=cors_monitor_showexclude(&cors,out,(int)sizeof(out));
+    if (n>0) vt_printf(vt,"%s",out);
+    else vt_printf(vt,"excluded=0\n");
+}
+
 static void cmd_loadopt(char **args, int narg, vt_t *vt)
 {
     if (narg<2) return;
@@ -1034,7 +1086,7 @@ static void con_thread(void *arg)
             "start","stop","addsource","delsource","loadopt",
             "navidata","observ","satellite","sourceinfo","monirtcm",
             "rtkpos","addvsta","delvsta","showdtrigs","plotdtrigs","showbls","showsubnet","adduser","deluser",
-            "showvstas","showusers","showmodes","shutdown",""
+            "showvstas","showusers","showmodes","excludesource","includesource","showexclude","shutdown",""
     };
     char buff[MAXCMD],*args[MAXARG],*p;
     int i,j,narg;
@@ -1079,7 +1131,10 @@ static void con_thread(void *arg)
             case 19: cmd_showvstas    (args,narg,con->vt); break;
             case 20: cmd_showusers    (args,narg,con->vt); break;
             case 21: cmd_showmodes    (args,narg,con->vt); break;
-            case 22:
+            case 22: cmd_exclude_source(args,narg,con->vt); break;
+            case 23: cmd_include_source(args,narg,con->vt); break;
+            case 24: cmd_showexclude  (args,narg,con->vt); break;
+            case 25:
                 if (!strcmp(args[0],"shutdown")) {
                     vt_printf(con->vt,"cors server shutdown ...\n");
                     sleepms(1000);

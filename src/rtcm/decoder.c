@@ -99,8 +99,9 @@ static void upd_rtcm_data(cors_rtcm_decoder_t *decoder, rtcm_t *rtcm, int ret)
                                   &cors->nav.data,info->pos);
             cors_nav_rinex_check_day();
         }
-        /* Insert into Delaunay only after first obs so dead streams cannot remesh. */
-        if (info&&!info->nrtk_meshed&&cors->nrtk.state&&
+        /* Insert into Delaunay only after first obs so dead streams cannot remesh.
+         * Excluded stations (STA-06) stay off the mesh while the stream continues. */
+        if (info&&!info->excluded&&!info->nrtk_meshed&&cors->nrtk.state&&
             cors->role!=CORS_ROLE_WORKER&&obs->n>0&&norm(info->pos,3)>0.0) {
             info->nrtk_meshed=1;
             cors_nrtk_add_source(&cors->nrtk,rtcm->srcid,info->pos);
